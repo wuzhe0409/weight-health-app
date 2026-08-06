@@ -1,8 +1,7 @@
-"""Desktop launcher — runs uvicorn in a windowless mode.
+"""Desktop launcher — runs FastAPI backend + native webview window.
 
-Used by PyInstaller to package as a standalone app.
-The FastAPI server serves both API and static frontend on :8011,
-then auto-opens the browser.
+Used by PyInstaller to package as a standalone desktop app.
+No browser needed — the app opens in its own native window.
 
 Run: python -m app.desktop_launcher
 """
@@ -11,15 +10,10 @@ from __future__ import annotations
 import os
 import sys
 import threading
-import webbrowser
 import time
 
 import uvicorn
-
-
-def _open_browser():
-    time.sleep(1.5)
-    webbrowser.open("http://127.0.0.1:8011")
+import webview
 
 
 def main():
@@ -31,15 +25,38 @@ def main():
 
     os.makedirs(os.path.join(base, "data"), exist_ok=True)
 
-    threading.Thread(target=_open_browser, daemon=True).start()
+    # Start FastAPI in a daemon thread
+    def run_server():
+        uvicorn.run(
+            "app.main:app",
+            host="127.0.0.1",
+            port=8011,
+            log_level="warning",
+        )
 
-    # Use app.main:app with lifespan handler
-    uvicorn.run(
-        "app.main:app",
-        host="127.0.0.1",
-        port=8011,
-        log_level="warning",
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    # Wait for server to be ready
+    url = "http://127.0.0.1:8011"
+    for _ in range(30):
+        try:
+            import urllib.request
+            urllib.request.urlopen(url, timeout=0.5)
+            break
+        except Exception:
+            time.sleep(0.2)
+
+    # Open native window
+    webview.create_window(
+        title="Weight Health · 减脂记录",
+        url=url,
+        width=1200,
+        height=800,
+        min_size=(900, 600),
+        text_select=True,
     )
+    webview.start()
 
 
 if __name__ == "__main__":

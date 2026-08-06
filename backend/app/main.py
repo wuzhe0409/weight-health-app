@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import os
 import sys
-import webbrowser
-import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -37,14 +35,6 @@ async def lifespan(app: FastAPI):
     init_db()
     with Session(engine) as s:
         ensure_user_profile(s)
-
-    # Auto-open browser on startup (desktop mode)
-    def _open_browser():
-        import time
-        time.sleep(1.0)
-        webbrowser.open("http://127.0.0.1:8011")
-
-    threading.Thread(target=_open_browser, daemon=True).start()
     yield
 
 

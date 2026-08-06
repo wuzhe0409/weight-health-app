@@ -9,8 +9,8 @@ PY="/Users/wuzhe/.workbuddy/binaries/python/envs/default/bin/python"
 echo "==> 1. Building frontend..."
 ( cd "$ROOT/frontend" && /Users/wuzhe/.workbuddy/binaries/node/versions/22.22.2/bin/npm run build )
 
-echo "==> 2. Installing PyInstaller..."
-"$PY" -m pip install pyinstaller aiofiles -q
+echo "==> 2. Installing build dependencies..."
+"$PY" -m pip install pywebview pyinstaller aiofiles -q
 
 echo "==> 3. Preparing static files for packaging..."
 # Copy frontend dist into backend directory for PyInstaller to bundle
@@ -24,7 +24,7 @@ build_mac() {
     # Fix the module for PyInstaller
     "$PY" -m PyInstaller \
         --name "Weight Health" \
-        --onefile \
+        --onedir \
         --windowed \
         --add-data "static:static" \
         --add-data "seed:seed" \
@@ -36,7 +36,10 @@ build_mac() {
         --hidden-import=uvicorn.protocols.http.auto \
         --hidden-import=aiofiles \
         --hidden-import=pydantic \
+        --hidden-import=webview \
+        --hidden-import=webview.platforms.cocoa \
         --collect-all=app \
+        --osx-bundle-identifier=com.wz.weighthealth \
         app/desktop_launcher.py
 
     echo "macOS app built: $ROOT/backend/dist/Weight Health"

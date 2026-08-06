@@ -15,8 +15,8 @@ if exist "static" rmdir /s /q "static"
 mkdir "static"
 xcopy /e /y "..\frontend\dist\*" "static\"
 
-echo === Installing PyInstaller ===
-pip install pyinstaller aiofiles -q
+echo === Installing build dependencies ===
+pip install pywebview pyinstaller aiofiles -q
 
 echo === Building Windows exe ===
 python -m PyInstaller ^
@@ -33,6 +33,7 @@ python -m PyInstaller ^
     --hidden-import=uvicorn.protocols.http.auto ^
     --hidden-import=aiofiles ^
     --hidden-import=pydantic ^
+    --hidden-import=webview ^
     --collect-all=app ^
     app/desktop_launcher.py
 
