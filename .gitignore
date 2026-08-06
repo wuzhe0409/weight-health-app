@@ -18,5 +18,12 @@ frontend/dist/
 # Archives
 *.zip
 
+# Build artifacts
+backend/static/
+backend/build/
+backend/dist/
+releases/
+*.spec
+
 # Local env
 .env

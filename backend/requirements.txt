@@ -3,3 +3,5 @@ uvicorn[standard]
 sqlmodel
 python-multipart
 httpx
+aiofiles
+pyinstaller

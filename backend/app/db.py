@@ -2,15 +2,26 @@
 from __future__ import annotations
 
 import os
+import sys
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import text
 
-# Paths
-APP_DIR = os.path.dirname(os.path.abspath(__file__))            # backend/app
-BACKEND_DIR = os.path.dirname(APP_DIR)                           # backend
-DATA_DIR = os.path.join(BACKEND_DIR, "data")
+# PyInstaller-aware paths
+if getattr(sys, "frozen", False):
+    # Running as PyInstaller bundle
+    BUNDLE_DIR = sys._MEIPASS
+    DATA_DIR = os.path.join(os.path.expanduser("~"), ".weight-health")
+    SCHEMA_PATH = os.path.join(BUNDLE_DIR, "schema.sql")
+    SEED_DIR = os.path.join(BUNDLE_DIR, "seed")
+else:
+    # Development
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    BACKEND_DIR = os.path.dirname(APP_DIR)
+    DATA_DIR = os.path.join(BACKEND_DIR, "data")
+    SCHEMA_PATH = os.path.join(BACKEND_DIR, "schema.sql")
+    SEED_DIR = os.path.join(BACKEND_DIR, "seed")
+
 DB_PATH = os.path.join(DATA_DIR, "app.db")
-SCHEMA_PATH = os.path.join(BACKEND_DIR, "schema.sql")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
