@@ -25,5 +25,8 @@ backend/dist/
 releases/
 *.spec
 
+# Desktop launcher (copied at build time)
+backend/app/desktop_launcher.py
+
 # Local env
 .env

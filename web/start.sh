@@ -6,7 +6,7 @@ set -e
 PY="${PY:-/Users/wuzhe/.workbuddy/binaries/python/envs/default/bin/python}"
 NPM="${NPM:-/Users/wuzhe/.workbuddy/binaries/node/versions/22.22.2/bin/npm}"
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Ensure DB + seed import before serving
 echo "==> Ensuring SQLite schema + idempotent history import"
