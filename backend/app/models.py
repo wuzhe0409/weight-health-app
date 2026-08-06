@@ -87,3 +87,20 @@ class AuditLog(SQLModel, table=True):
     before_json: str | None = None
     after_json: str | None = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class FoodLibraryItem(SQLModel, table=True):
+    __tablename__ = "food_library"
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)  # 食物名称
+    category: str = Field(default="other")  # staple/meat/veg/fruit/snack/drink/dairy/other
+    calories_per_100g: float | None = None
+    protein_per_100g: float | None = None
+    carbs_per_100g: float | None = None
+    fat_per_100g: float | None = None
+    common_portion: str | None = None  # e.g. "1碗(200g)"
+    common_portion_g: float | None = None
+    common_portion_kcal: float | None = None
+    is_custom: int = Field(default=0)  # 0=system, 1=user-added
+    user_id: int | None = Field(default=None)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))

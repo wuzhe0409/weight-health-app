@@ -235,3 +235,49 @@ body {
   color: transparent;
   font-weight: 800;
 }
+
+/* ── V2: 食物库搜索下拉 ── */
+.food-search-dropdown {
+  background: #fff;
+  border: 1px solid var(--brand-200);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.12);
+  margin-bottom: 16px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.food-search-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--brand-50);
+  transition: background 0.15s;
+}
+.food-search-item:last-child { border-bottom: none; }
+.food-search-item:hover { background: var(--brand-50); }
+.food-name {
+  font-weight: 600;
+  color: var(--brand-900);
+  min-width: 120px;
+}
+.food-nutrition {
+  font-size: 12px;
+  color: var(--brand-500);
+}
+.food-portion {
+  font-size: 12px;
+  color: var(--brand-400);
+  margin-left: auto;
+}
+
+/* ── V2: 拍照识食结果 ── */
+.vision-result-card {
+  margin-top: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #F5F3FE, #EDE9FE);
+  border: 1px solid var(--brand-200);
+  border-radius: 12px;
+}

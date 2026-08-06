@@ -136,3 +136,35 @@ async def chat(payload: dict, session: Session = Depends(get_session)):
         raise HTTPException(status_code=502, detail=f"AI 调用失败: {e}")
 
     return {"reply": reply}
+
+
+@router.post("/vision-food")
+async def vision_food(payload: dict, session: Session = Depends(get_session)):
+    """Analyze a food photo using vision AI. Returns recognized food items."""
+    image_base64 = (payload.get("image") or "").strip()
+    if not image_base64:
+        raise HTTPException(status_code=422, detail="image (base64) required")
+
+    from app.db import ensure_user_profile
+    ensure_user_profile(session)
+    profile = session.get(UserProfile, 1)
+
+    # Use vision provider from profile
+    if not profile.vision_api_key:
+        return {
+            "foods": [],
+            "total_kcal_estimate": 0,
+            "raw_response": "未配置图像识别模型。请在设置 → AI模型配置中，填写「图片识别」的 API Key（推荐智谱 GLM-4V-Flash）。",
+        }
+
+    provider = ai_provider.get_provider(
+        "zhipu",
+        api_key=profile.vision_api_key,
+        base_url=profile.vision_base_url or "https://open.bigmodel.cn/api/paas/v4/",
+        model=profile.vision_model or "glm-4v-flash",
+    )
+    try:
+        result = await provider.vision_food(image_base64)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"图像识别失败: {e}")
+    return result

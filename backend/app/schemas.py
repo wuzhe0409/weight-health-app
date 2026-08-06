@@ -76,3 +76,35 @@ class RecordResponse(SQLModel):
     is_locked: int = 0
     food_entries: List[Dict[str, Any]] = []
     weight_measurements: List[Dict[str, Any]] = []
+
+
+# ── Food Library ──
+class FoodLibraryCreate(SQLModel):
+    name: str
+    category: str = "other"
+    calories_per_100g: Optional[float] = None
+    protein_per_100g: Optional[float] = None
+    carbs_per_100g: Optional[float] = None
+    fat_per_100g: Optional[float] = None
+    common_portion: Optional[str] = None
+    common_portion_g: Optional[float] = None
+    common_portion_kcal: Optional[float] = None
+
+
+class FoodLibraryResponse(SQLModel):
+    id: int
+    name: str
+    category: str = "other"
+    calories_per_100g: Optional[float] = None
+    protein_per_100g: Optional[float] = None
+    carbs_per_100g: Optional[float] = None
+    fat_per_100g: Optional[float] = None
+    common_portion: Optional[str] = None
+    common_portion_g: Optional[float] = None
+    common_portion_kcal: Optional[float] = None
+    is_custom: int = 0
+
+
+class FoodSearchResult(SQLModel):
+    items: List[FoodLibraryResponse] = []
+    total: int = 0

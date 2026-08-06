@@ -11,7 +11,13 @@
         <span class="muted" style="margin-left:8px;font-weight:400">
           输入饮食记录或提问 · 支持 Ctrl+V 粘贴图片 · Ctrl+Enter 发送
         </span>
+        <el-button size="small" text style="float:right" @click="clearHistory">清空对话</el-button>
       </template>
+
+      <!-- Quick actions -->
+      <div class="quick-actions">
+        <el-tag v-for="qa in quickActions" :key="qa" class="quick-tag" @click="nlText = qa; onSendChat()">{{ qa }}</el-tag>
+      </div>
 
       <div class="chat-messages" v-if="chatMessages.length" ref="chatBox">
         <div v-for="(m, i) in chatMessages" :key="i" :class="m.role === 'user' ? 'chat-msg-user' : 'chat-msg-ai'">
@@ -106,11 +112,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { MagicStick, Loading } from '@element-plus/icons-vue'
 import api from '@/api'
+
+const CHAT_STORAGE_KEY = 'weight-health-chat-history'
 
 const router = useRouter()
 const nlText = ref('')
@@ -122,6 +130,35 @@ const aiResult = ref<any>(null)
 const savedDate = ref('')
 const chatMessages = ref<{ role: string; content: string; images?: { name: string; dataUrl: string }[] }[]>([])
 const chatBox = ref<HTMLElement | null>(null)
+
+const quickActions = [
+  '我今天还能吃什么？',
+  '分析一下我这周的体重趋势',
+  '最近饮食有什么问题吗？',
+  '明天体重会涨还是跌？',
+]
+
+// ── Persistent history (V2) ──
+function loadHistory() {
+  try {
+    const saved = localStorage.getItem(CHAT_STORAGE_KEY)
+    if (saved) chatMessages.value = JSON.parse(saved)
+  } catch { /* ignore */ }
+}
+function saveHistory() {
+  try {
+    // Only save last 30 messages to avoid bloating
+    const recent = chatMessages.value.slice(-30)
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(recent))
+  } catch { /* ignore */ }
+}
+function clearHistory() {
+  chatMessages.value = []
+  localStorage.removeItem(CHAT_STORAGE_KEY)
+  ElMessage.success('对话已清空')
+}
+watch(chatMessages, () => saveHistory(), { deep: true })
+onMounted(loadHistory)
 
 function renderMd(text: string) {
   if (!text) return ''
@@ -313,5 +350,21 @@ function jumpToToday() {
   line-height: 1.7; color: #4b5563;
   background: #faf8ff; padding: 12px 14px;
   border-radius: 10px; border: 1px solid #ede7fb;
+}
+
+/* ── V2: 快速提问 ── */
+.quick-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--brand-100);
+}
+.quick-tag {
+  cursor: pointer; transition: all 0.2s;
+  background: var(--brand-50); color: var(--brand-700);
+  border-color: var(--brand-200);
+}
+.quick-tag:hover {
+  background: var(--brand-200); color: var(--brand-900);
+  transform: translateY(-1px);
 }
 </style>

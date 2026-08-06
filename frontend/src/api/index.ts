@@ -40,6 +40,18 @@ export const api = {
   aiAnalyze: (data: any) => http.post('/ai/analyze', data),
 
   aiChat: (message: string, history?: any[]) => http.post('/ai/chat', { message, history }),
+
+  // ── Food Library (V2) ──
+  searchFoods: (q: string, category?: string, limit?: number) =>
+    http.get('/foods/search', { params: { q, category, limit } }),
+
+  addCustomFood: (data: { name: string; category?: string; calories_per_100g?: number; protein_per_100g?: number; carbs_per_100g?: number; fat_per_100g?: number; common_portion?: string; common_portion_g?: number; common_portion_kcal?: number }) =>
+    http.post('/foods', data),
+
+  foodCategories: () => http.get('/foods/categories'),
+
+  // ── Vision Food Recognition (V2) ──
+  visionFood: (image: string) => http.post('/ai/vision-food', { image }),
 }
 
 export default api

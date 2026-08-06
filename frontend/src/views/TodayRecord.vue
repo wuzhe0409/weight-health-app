@@ -40,16 +40,76 @@
 
       <!-- 自然语言解析 -->
       <el-divider content-position="left">自然语言录入</el-divider>
-      <el-input v-model="nlText" type="textarea" :rows="3" placeholder="例如：6月18日 体重49.5 没拉粑粑 早餐吃了一个包子 午餐吃了跷脚牛肉 晚餐没吃" />
-      <el-button type="primary" style="margin-top:10px" @click="onParse" :disabled="!nlText.trim()">解析</el-button>
+      <div style="display:flex;gap:12px;align-items:flex-start">
+        <div style="flex:1">
+          <el-input v-model="nlText" type="textarea" :rows="3" placeholder="例如：6月18日 体重49.5 没拉粑粑 早餐吃了一个包子 午餐吃了跷脚牛肉 晚餐没吃" />
+          <el-button type="primary" style="margin-top:10px" @click="onParse" :disabled="!nlText.trim()">解析</el-button>
+        </div>
+        <!-- V2: 拍照识食 -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px;min-width:100px">
+          <input ref="photoInput" type="file" accept="image/*" capture="environment" style="display:none" @change="onPhotoSelected" />
+          <el-button @click="($refs.photoInput as HTMLInputElement).click()" circle size="large" :loading="photoLoading">
+            <span v-if="!photoLoading" style="font-size:24px">📸</span>
+          </el-button>
+          <span class="muted" style="font-size:11px">拍照识食</span>
+        </div>
+      </div>
+
+      <!-- 拍照识别结果 -->
+      <div v-if="photoResult" class="vision-result-card">
+        <div v-if="photoImage" style="margin-bottom:12px">
+          <img :src="photoImage" style="max-width:200px;max-height:160px;border-radius:8px" />
+        </div>
+        <div v-if="photoResult.foods && photoResult.foods.length">
+          <div class="muted" style="margin-bottom:8px">🎯 识别出以下食物：</div>
+          <div v-for="(f, i) in photoResult.foods" :key="i" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+            <el-tag>{{ f.name }}</el-tag>
+            <span class="muted">{{ f.quantity_guess }}</span>
+            <b class="stat-num-purple">{{ f.kcal_estimate }}kcal</b>
+            <el-tag size="small" :type="f.confidence === 'high' ? 'success' : f.confidence === 'low' ? 'danger' : 'warning'">{{ f.confidence === 'high' ? '高置信' : f.confidence === 'low' ? '低置信' : '中等' }}</el-tag>
+          </div>
+          <div style="margin-top:8px">
+            <el-button type="primary" size="small" @click="adoptPhotoFoods">✅ 添加到饮食明细</el-button>
+            <el-button size="small" @click="photoResult=null;photoImage=null">清除</el-button>
+          </div>
+        </div>
+        <div v-else class="muted">{{ photoResult.raw_response || '未能识别出食物，请换张清晰的照片试试' }}</div>
+      </div>
 
       <!-- 饮食明细 -->
       <div v-if="foodList.length">
-        <el-divider content-position="left">饮食明细</el-divider>
+        <el-divider content-position="left">
+          <span style="display:flex;align-items:center;gap:8px">
+            饮食明细
+            <el-input v-model="foodSearchQuery" placeholder="🔍 从食物库搜索添加…" size="small" style="width:220px" clearable @clear="foodSearchResults=[]" />
+          </span>
+        </el-divider>
+        <!-- 食物库搜索结果 -->
+        <div v-if="foodSearchResults.length" class="food-search-dropdown">
+          <div v-for="item in foodSearchResults" :key="item.id" class="food-search-item" @click="selectFoodFromLibrary(item)">
+            <span class="food-name">{{ item.name }}</span>
+            <span class="food-nutrition">{{ item.calories_per_100g }}kcal/100g · P{{ item.protein_per_100g }} C{{ item.carbs_per_100g }} F{{ item.fat_per_100g }}</span>
+            <span v-if="item.common_portion" class="food-portion">{{ item.common_portion }} · {{ item.common_portion_kcal }}kcal</span>
+          </div>
+        </div>
         <div v-for="mealKey in ['breakfast','lunch','dinner','snack','drink']" :key="mealKey" style="margin-bottom:12px">
           <div class="muted" style="margin-bottom:6px">{{ mealLabels[mealKey] }}</div>
           <div v-for="f in foodsByMeal(mealKey)" :key="f._k" style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
-            <el-input v-model="f.food_name" placeholder="食物名称" style="width:260px" />
+            <el-autocomplete
+              v-model="f.food_name"
+              :fetch-suggestions="(q:string,cb:any) => foodSuggest(q,cb)"
+              placeholder="食物名称（输入搜索食物库）"
+              style="width:260px"
+              :trigger-on-focus="true"
+              @select="(item:any) => fillFoodNutrition(f, item)"
+            >
+              <template #default="{ item }">
+                <div style="display:flex;justify-content:space-between;align-items:center;width:100%">
+                  <span>{{ item.value }}</span>
+                  <span style="color:#7C3AED;font-size:12px">{{ item.kcal }}kcal/100g</span>
+                </div>
+              </template>
+            </el-autocomplete>
             <el-input v-model="f.quantity_text" placeholder="数量" style="width:220px" />
             <el-input v-model.number="f.kcal" type="number" placeholder="热量" style="width:100px" />
             <el-select v-model="f.kcal_source" style="width:140px">
@@ -130,8 +190,58 @@ interface FoodRow {
   kcal: number | null
   kcal_source: string
 }
-let keySeq = 1
-const foodList = ref<FoodRow[]>([])
+
+// ── Food Library search (V2) ──
+const foodSearchQuery = ref('')
+const foodSearchResults = ref<any[]>([])
+let foodSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(foodSearchQuery, (q) => {
+  if (foodSearchTimer) clearTimeout(foodSearchTimer)
+  if (!q || q.length < 1) { foodSearchResults.value = []; return }
+  foodSearchTimer = setTimeout(async () => {
+    try {
+      const { data } = await api.searchFoods(q, undefined, 8)
+      foodSearchResults.value = data.items || []
+    } catch { foodSearchResults.value = [] }
+  }, 250)
+})
+
+function selectFoodFromLibrary(item: any) {
+  // Add as a new food row with nutrition data pre-filled
+  const defaultMeal = 'snack' // default to snack, user can move
+  foodList.value.push({
+    _k: keySeq++,
+    meal_type: defaultMeal,
+    food_name: item.name,
+    quantity_text: item.common_portion || '',
+    kcal: item.common_portion_kcal ?? item.calories_per_100g ?? null,
+    kcal_source: 'official',
+  })
+  foodSearchQuery.value = ''
+  foodSearchResults.value = []
+}
+
+async function foodSuggest(query: string, cb: (results: any[]) => void) {
+  if (!query || query.length < 1) { cb([]); return }
+  try {
+    const { data } = await api.searchFoods(query, undefined, 10)
+    cb((data.items || []).map((f: any) => ({
+      value: f.name,
+      kcal: f.calories_per_100g,
+      item: f,  // keep full data for fill
+    })))
+  } catch { cb([]) }
+}
+
+function fillFoodNutrition(row: FoodRow, suggest: any) {
+  const item = suggest.item
+  if (!item) return
+  row.food_name = item.name
+  row.quantity_text = item.common_portion || ''
+  row.kcal = item.common_portion_kcal ?? item.calories_per_100g ?? null
+  row.kcal_source = 'official'
+}
 
 const mealLabels: Record<string, string> = {
   breakfast: '早餐', lunch: '午餐', dinner: '晚餐', snack: '加餐', drink: '饮料',
@@ -229,4 +339,52 @@ onMounted(() => {
   if (route.query.date) form.record_date = String(route.query.date)
   loadDate()
 })
+
+// ── V2: 拍照识食 ──
+const photoInput = ref<HTMLInputElement | null>(null)
+const photoLoading = ref(false)
+const photoImage = ref<string | null>(null)
+const photoResult = ref<any>(null)
+
+function onPhotoSelected(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = async () => {
+    const base64 = (reader.result as string).split(',')[1]
+    photoImage.value = reader.result as string
+    photoLoading.value = true
+    try {
+      const { data } = await api.visionFood(base64)
+      photoResult.value = data
+      if (data.foods?.length) {
+        ElMessage.success(`识别到 ${data.foods.length} 种食物`)
+      } else {
+        ElMessage.info(data.raw_response || '未能识别')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.detail || '识别失败')
+    } finally {
+      photoLoading.value = false
+    }
+  }
+  reader.readAsDataURL(file)
+}
+
+function adoptPhotoFoods() {
+  if (!photoResult.value?.foods) return
+  for (const f of photoResult.value.foods) {
+    foodList.value.push({
+      _k: keySeq++,
+      meal_type: 'lunch',  // default to lunch, user adjusts
+      food_name: f.name,
+      quantity_text: f.quantity_guess || '',
+      kcal: f.kcal_estimate ?? null,
+      kcal_source: 'estimated',
+    })
+  }
+  ElMessage.success('已添加到饮食明细，请调整餐别和核对份量')
+  photoResult.value = null
+  photoImage.value = null
+}
 </script>

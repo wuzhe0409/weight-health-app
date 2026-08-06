@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from app.db import engine, init_db, ensure_user_profile
-from app.routers import records, stats, import_export, profile, ai
+from app.routers import records, stats, import_export, profile, ai, foods
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.include_router(stats.router)
 app.include_router(import_export.router)
 app.include_router(profile.router)
 app.include_router(ai.router)
+app.include_router(foods.router)
 
 
 @app.get("/")

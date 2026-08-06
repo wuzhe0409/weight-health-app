@@ -59,6 +59,20 @@ class AIProvider(ABC):
         """Free-form nutrition Q&A chat. Returns markdown reply."""
         ...
 
+    @abstractmethod
+    async def vision_food(
+        self,
+        image_base64: str,
+    ) -> Dict[str, Any]:
+        """Analyze a food photo and return structured food items.
+        
+        Expected keys:
+          - foods: list of {name, quantity_guess, kcal_estimate, confidence}
+          - total_kcal_estimate: float
+          - raw_response: str
+        """
+        ...
+
 
 class LocalRuleProvider(AIProvider):
     def parse(self, text: str, base: Optional[date] = None) -> ParsePreview:
@@ -113,6 +127,13 @@ class LocalRuleProvider(AIProvider):
         profile: Dict[str, Any],
     ) -> str:
         return "**未配置 AI 模型**\n\n请在「设置」中配置 API key 后即可进行 AI 对话。"
+
+    async def vision_food(self, image_base64: str) -> Dict[str, Any]:
+        return {
+            "foods": [],
+            "total_kcal_estimate": 0,
+            "raw_response": "未配置图像识别模型。请在设置中配置智谱 GLM-4V 的 API Key。",
+        }
 
 
 CHAT_SYSTEM_PROMPT = """你是一位专业、亲切的减脂营养顾问。用户正在记录每日体重和饮食，可能会向你提问。
@@ -532,6 +553,71 @@ class OpenAIProvider(AIProvider):
             return f"模型接口错误（{hint}），请检查配置或稍后重试。"
         except Exception as e:
             return f"调用 AI 时出错：{e}"
+
+    async def vision_food(self, image_base64: str) -> Dict[str, Any]:
+        """Analyze a food photo using vision model (e.g. GLM-4V)."""
+        if self.model.lower() not in self.MULTIMODAL_MODELS:
+            return {
+                "foods": [],
+                "total_kcal_estimate": 0,
+                "raw_response": f"当前模型 {self.model} 不支持图片识别，请使用智谱 GLM-4V 或 GPT-4o。",
+            }
+
+        vision_system = """你是一个食物热量识别助手。用户会发一张食物照片给你分析。
+请识别照片中的所有食物，并给出每项食物的名称、份量估算、热量估算（kcal）。
+
+输出必须是纯 JSON（第一个字符是 {，最后一个字符是 }），格式：
+{
+  "foods": [
+    {"name": "食物名称", "quantity_guess": "约200g", "kcal_estimate": 280, "confidence": "high"}
+  ],
+  "total_kcal_estimate": 520,
+  "note": "整体评价或注意事项"
+}
+
+规则：
+- 识别中餐菜品时用中文名称（如"西红柿炒鸡蛋""宫保鸡丁"）
+- 份量根据图片中与其他物品的大小对比来估算
+- confidence 分 high/medium/low
+- 如果无法识别，返回空 foods 数组并说明原因"""
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": vision_system},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "请分析这张图片中是什么食物，份量大约多少，总热量约多少大卡。"},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                                ],
+                            },
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 1024,
+                    },
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            raw = data["choices"][0]["message"]["content"] or ""
+            parsed = _extract_json(raw)
+            parsed.setdefault("foods", [])
+            parsed.setdefault("total_kcal_estimate", 0)
+            parsed.setdefault("raw_response", raw)
+            return parsed
+        except httpx.HTTPStatusError as e:
+            hint = self.HTTP_HINTS.get(e.response.status_code, f"HTTP {e.response.status_code}")
+            return {"foods": [], "total_kcal_estimate": 0, "raw_response": f"图像识别接口错误（{hint}）"}
+        except Exception as e:
+            return {"foods": [], "total_kcal_estimate": 0, "raw_response": f"图像识别失败：{e}"}
 
 
 def _error_result(msg: str, raw: str = "") -> Dict[str, Any]:

@@ -42,6 +42,33 @@ def init_db() -> None:
         conn.executescript(schema_sql)
         conn.commit()
     _migrate_existing_db()
+    _migrate_food_library()
+
+
+def _migrate_food_library() -> None:
+    """Create food_library table if it doesn't exist (for existing DBs)."""
+    with engine.raw_connection() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS food_library ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  name TEXT NOT NULL,"
+            "  category TEXT DEFAULT 'other',"
+            "  calories_per_100g REAL,"
+            "  protein_per_100g REAL,"
+            "  carbs_per_100g REAL,"
+            "  fat_per_100g REAL,"
+            "  common_portion TEXT,"
+            "  common_portion_g REAL,"
+            "  common_portion_kcal REAL,"
+            "  is_custom INTEGER DEFAULT 0,"
+            "  user_id INTEGER,"
+            "  created_at TEXT"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_food_name ON food_library(name)"
+        ))
+        conn.commit()
 
 
 def get_session():
