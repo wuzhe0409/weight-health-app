@@ -48,7 +48,7 @@ def init_db() -> None:
 def _migrate_food_library() -> None:
     """Create food_library table if it doesn't exist (for existing DBs)."""
     with engine.raw_connection() as conn:
-        conn.execute(text(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS food_library ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "  name TEXT NOT NULL,"
@@ -64,10 +64,10 @@ def _migrate_food_library() -> None:
             "  user_id INTEGER,"
             "  created_at TEXT"
             ")"
-        ))
-        conn.execute(text(
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_food_name ON food_library(name)"
-        ))
+        )
         conn.commit()
 
 
