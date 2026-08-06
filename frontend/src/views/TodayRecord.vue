@@ -48,7 +48,7 @@
         <!-- V2: 拍照识食 -->
         <div style="display:flex;flex-direction:column;align-items:center;gap:8px;min-width:100px">
           <input ref="photoInput" type="file" accept="image/*" capture="environment" style="display:none" @change="onPhotoSelected" />
-          <el-button @click="($refs.photoInput as HTMLInputElement).click()" circle size="large" :loading="photoLoading">
+          <el-button @click="triggerPhotoInput" circle size="large" :loading="photoLoading">
             <span v-if="!photoLoading" style="font-size:24px">📸</span>
           </el-button>
           <span class="muted" style="font-size:11px">拍照识食</span>
@@ -190,6 +190,9 @@ interface FoodRow {
   kcal: number | null
   kcal_source: string
 }
+
+let keySeq = 1
+const foodList = ref<FoodRow[]>([])
 
 // ── Food Library search (V2) ──
 const foodSearchQuery = ref('')
@@ -345,6 +348,10 @@ const photoInput = ref<HTMLInputElement | null>(null)
 const photoLoading = ref(false)
 const photoImage = ref<string | null>(null)
 const photoResult = ref<any>(null)
+
+function triggerPhotoInput() {
+  photoInput.value?.click()
+}
 
 function onPhotoSelected(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
