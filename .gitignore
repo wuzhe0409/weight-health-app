@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# App runtime data — NEVER commit the database or backups
+backend/data/app.db
+backend/data/backups/
+backend/data/*.db
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+
+# Archives
+*.zip
+
+# Local env
+.env
