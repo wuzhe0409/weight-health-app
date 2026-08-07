@@ -3,7 +3,7 @@ name: Build Windows Desktop App (Friend Edition)
 on:
   push:
     branches: [main, v2-develop]
-  workflow_dispatch:  # Manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-windows:
@@ -28,53 +28,17 @@ jobs:
           npm run build
 
       - name: Install Python dependencies
-        run: |
-          pip install pywebview pyinstaller aiofiles httpx fastapi uvicorn sqlmodel python-multipart
+        run: pip install pywebview pyinstaller aiofiles httpx fastapi uvicorn sqlmodel python-multipart
 
-      - name: Prepare static & copy launcher
+      - name: Build with batch script
         shell: cmd
-        run: |
-          if not exist backend\static mkdir backend\static
-          xcopy frontend\dist\* backend\static\ /E /Y /Q
-          copy desktop\desktop_launcher.py backend\app\ /Y
-          if not exist backend\seed_clean mkdir backend\seed_clean
-          echo clean > backend\seed_clean\README.txt
-
-      - name: Build Windows exe
-        run: |
-          cd backend
-          python -m PyInstaller `
-            --name "WeightHealth-Friend" `
-            --onedir `
-            --windowed `
-            --add-data "static;static" `
-            --add-data "seed_clean;seed" `
-            --add-data "schema.sql;." `
-            --hidden-import=sqlmodel `
-            --hidden-import=fastapi `
-            --hidden-import=uvicorn `
-            --hidden-import=uvicorn.loops.auto `
-            --hidden-import=uvicorn.protocols.http.auto `
-            --hidden-import=aiofiles `
-            --hidden-import=pydantic `
-            --hidden-import=webview `
-            --collect-all=app `
-            app/desktop_launcher.py
+        run: .\desktop\build-ci.bat
 
       - name: Package as ZIP
-        run: |
-          Compress-Archive -Path backend/dist/WeightHealth-Friend/* -DestinationPath WeightHealth-Friend-Windows.zip
+        run: Compress-Archive -Path backend\dist\WeightHealth-Friend\* -DestinationPath WeightHealth-Friend-Windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: WeightHealth-Friend-Windows
           path: WeightHealth-Friend-Windows.zip
-
-      - name: Create Release (on version tags)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: WeightHealth-Friend-Windows.zip
-          name: Weight Health Friend Edition
-          draft: true

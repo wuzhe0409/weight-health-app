@@ -1,26 +1,30 @@
 @echo off
+setlocal enabledelayedexpansion
 :: ============================================================
-::  CI Build Script for Windows (used by GitHub Actions)
-::  Clean version — no historical data
+::  CI Build Script — GitHub Actions Windows runner
+::  Clean build (no historical data) for Friend Edition
 :: ============================================================
-setlocal
 
-echo [1/3] Preparing static...
-if exist "backend\static" rmdir /s /q "backend\static"
-mkdir "backend\static"
-xcopy /e /y "frontend\dist\*" "backend\static\"
+echo === Prepare static ===
+if not exist "backend\static" mkdir "backend\static"
+xcopy /e /y /q "frontend\dist\*" "backend\static\"
 
-echo [2/3] Copying launcher...
+echo === Copy launcher ===
 copy /y "desktop\desktop_launcher.py" "backend\app\desktop_launcher.py"
 
-echo [3/3] Building with PyInstaller...
+echo === Create empty seed ===
+if not exist "backend\seed_clean" mkdir "backend\seed_clean"
+echo clean > "backend\seed_clean\README.txt"
+
+echo === Build with PyInstaller ===
 cd backend
+
 python -m PyInstaller ^
     --name "WeightHealth-Friend" ^
     --onedir ^
     --windowed ^
     --add-data "static;static" ^
-    --add-data "..\desktop\seed_clean;seed" ^
+    --add-data "seed_clean;seed" ^
     --add-data "schema.sql;." ^
     --hidden-import=sqlmodel ^
     --hidden-import=fastapi ^
@@ -31,6 +35,9 @@ python -m PyInstaller ^
     --hidden-import=pydantic ^
     --hidden-import=webview ^
     --collect-all=app ^
-    app/desktop_launcher.py
+    app\desktop_launcher.py
 
-echo Build complete.
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo === Build done ===
+dir dist\WeightHealth-Friend\WeightHealth-Friend.exe
