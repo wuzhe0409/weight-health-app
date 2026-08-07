@@ -32,12 +32,12 @@ jobs:
           pip install pywebview pyinstaller aiofiles httpx fastapi uvicorn sqlmodel python-multipart
 
       - name: Prepare static & copy launcher
+        shell: cmd
         run: |
-          mkdir -p backend/static
-          xcopy frontend\dist\* backend\static\ /E /Y
-          copy desktop\desktop_launcher.py backend\app\
-          rem Create empty seed dir (no seed data = clean start)
-          mkdir backend\seed_clean 2>nul
+          if not exist backend\static mkdir backend\static
+          xcopy frontend\dist\* backend\static\ /E /Y /Q
+          copy desktop\desktop_launcher.py backend\app\ /Y
+          if not exist backend\seed_clean mkdir backend\seed_clean
           echo clean > backend\seed_clean\README.txt
 
       - name: Build Windows exe
