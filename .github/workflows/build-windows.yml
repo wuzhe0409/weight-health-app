@@ -1,0 +1,78 @@
+name: Build Windows Desktop App (Friend Edition)
+
+on:
+  push:
+    branches: [main, v2-develop]
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Install Python dependencies
+        run: |
+          pip install pywebview pyinstaller aiofiles httpx fastapi uvicorn sqlmodel python-multipart
+
+      - name: Prepare static & copy launcher
+        shell: bash
+        run: |
+          mkdir -p backend/static
+          cp -r frontend/dist/* backend/static/
+          cp desktop/desktop_launcher.py backend/app/
+
+      - name: Build Windows exe
+        run: |
+          cd backend
+          python -m PyInstaller `
+            --name "WeightHealth-Friend" `
+            --onedir `
+            --windowed `
+            --add-data "static;static" `
+            --add-data "..\desktop\seed_clean;seed" `
+            --add-data "schema.sql;." `
+            --hidden-import=sqlmodel `
+            --hidden-import=fastapi `
+            --hidden-import=uvicorn `
+            --hidden-import=uvicorn.loops.auto `
+            --hidden-import=uvicorn.protocols.http.auto `
+            --hidden-import=aiofiles `
+            --hidden-import=pydantic `
+            --hidden-import=webview `
+            --collect-all=app `
+            app/desktop_launcher.py
+
+      - name: Package as ZIP
+        run: |
+          Compress-Archive -Path backend/dist/WeightHealth-Friend/* -DestinationPath WeightHealth-Friend-Windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeightHealth-Friend-Windows
+          path: WeightHealth-Friend-Windows.zip
+
+      - name: Create Release (on version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: WeightHealth-Friend-Windows.zip
+          name: Weight Health Friend Edition
+          draft: true
