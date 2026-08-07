@@ -13,16 +13,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Build frontend
+        working-directory: frontend
         run: |
-          cd frontend
-          npm install
+          npm ci
           npm run build
 
       - name: Install Python deps
