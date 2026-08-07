@@ -21,9 +21,7 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm install && npm run build
 
       - name: Install Python deps
         run: python -m pip install pywebview pyinstaller aiofiles httpx "fastapi[standard]" sqlmodel python-multipart
