@@ -20,7 +20,7 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: |
-          npm install --no-audit --no-fund --legacy-peer-deps
+          npm ci --no-audit --no-fund --legacy-peer-deps
           npm run build
 
       - uses: actions/upload-artifact@v4
