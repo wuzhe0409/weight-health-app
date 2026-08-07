@@ -32,11 +32,13 @@ jobs:
           pip install pywebview pyinstaller aiofiles httpx fastapi uvicorn sqlmodel python-multipart
 
       - name: Prepare static & copy launcher
-        shell: bash
         run: |
           mkdir -p backend/static
-          cp -r frontend/dist/* backend/static/
-          cp desktop/desktop_launcher.py backend/app/
+          xcopy frontend\dist\* backend\static\ /E /Y
+          copy desktop\desktop_launcher.py backend\app\
+          rem Create empty seed dir (no seed data = clean start)
+          mkdir backend\seed_clean 2>nul
+          echo clean > backend\seed_clean\README.txt
 
       - name: Build Windows exe
         run: |
@@ -46,7 +48,7 @@ jobs:
             --onedir `
             --windowed `
             --add-data "static;static" `
-            --add-data "..\desktop\seed_clean;seed" `
+            --add-data "seed_clean;seed" `
             --add-data "schema.sql;." `
             --hidden-import=sqlmodel `
             --hidden-import=fastapi `
