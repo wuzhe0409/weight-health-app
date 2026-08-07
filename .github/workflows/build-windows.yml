@@ -8,68 +8,58 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Build frontend
-        run: |
-          cd frontend
-          npm install
-          npm run build
+        run: cd frontend && npm install && npm run build
+        shell: bash
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pywebview pyinstaller aiofiles httpx "fastapi[standard]" sqlmodel python-multipart
+      - name: Install Python deps
+        run: python -m pip install pywebview pyinstaller aiofiles httpx "fastapi[standard]" sqlmodel python-multipart
+        shell: powershell
 
-      - name: Prepare static files
+      - name: Prepare
+        shell: powershell
         run: |
-          mkdir -p backend/static
-          cp -r frontend/dist/* backend/static/
-          cp desktop/desktop_launcher.py backend/app/
-          mkdir -p backend/seed_clean
-          echo "clean" > backend/seed_clean/README.txt
+          New-Item -ItemType Directory -Force -Path backend\static
+          Copy-Item -Recurse -Force frontend\dist\* backend\static\
+          Copy-Item -Force desktop\desktop_launcher.py backend\app\
+          New-Item -ItemType Directory -Force -Path backend\seed_clean
+          Set-Content -Path backend\seed_clean\README.txt -Value "clean"
 
-      - name: Build Windows exe
+      - name: Build exe
+        shell: powershell
         run: |
           cd backend
-          python -m PyInstaller \
-            --name "WeightHealth-Friend" \
-            --onedir \
-            --windowed \
-            --add-data "static;static" \
-            --add-data "seed_clean;seed" \
-            --add-data "schema.sql;." \
-            --hidden-import=sqlmodel \
-            --hidden-import=fastapi \
-            --hidden-import=uvicorn \
-            --hidden-import=uvicorn.loops.auto \
-            --hidden-import=uvicorn.protocols.http.auto \
-            --hidden-import=aiofiles \
-            --hidden-import=pydantic \
-            --hidden-import=webview \
-            --collect-all=app \
-            app/desktop_launcher.py
+          python -m PyInstaller --name WeightHealth-Friend --onedir --windowed `
+            --add-data "static;static" `
+            --add-data "seed_clean;seed" `
+            --add-data "schema.sql;." `
+            --hidden-import sqlmodel `
+            --hidden-import fastapi `
+            --hidden-import uvicorn `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import aiofiles `
+            --hidden-import pydantic `
+            --hidden-import webview `
+            --collect-all app `
+            app\desktop_launcher.py
 
-      - name: Package as ZIP
-        shell: pwsh
-        run: Compress-Archive -Path backend/dist/WeightHealth-Friend/* -DestinationPath WeightHealth-Friend-Windows.zip
+      - name: Package
+        shell: powershell
+        run: Compress-Archive -Path backend\dist\WeightHealth-Friend\* -DestinationPath WeightHealth-Friend-Windows.zip
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: WeightHealth-Friend-Windows
           path: WeightHealth-Friend-Windows.zip
