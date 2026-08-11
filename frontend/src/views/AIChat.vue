@@ -16,7 +16,7 @@
 
       <!-- Quick actions -->
       <div class="quick-actions">
-        <el-tag v-for="qa in quickActions" :key="qa" class="quick-tag" @click="nlText = qa; onSendChat()">{{ qa }}</el-tag>
+        <el-tag v-for="qa in quickActions" :key="qa" class="quick-tag" @click="useQuickAction(qa)">{{ qa }}</el-tag>
       </div>
 
       <div class="chat-messages" v-if="chatMessages.length" ref="chatBox">
@@ -41,11 +41,13 @@
         </div>
       </div>
 
-      <div style="margin-top:10px;display:flex;gap:10px">
-        <el-button type="primary" @click="onAiAnalyze" :loading="aiLoading">
-          <el-icon style="margin-right:4px"><MagicStick /></el-icon>智能分析
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <el-button type="primary" @click="onSendAI" :loading="anyLoading" :disabled="!canSend">
+          <el-icon style="margin-right:4px"><Promotion /></el-icon>发 送
         </el-button>
-        <el-button @click="onSendChat" :loading="chatLoading" :disabled="!nlText.trim()">发送提问</el-button>
+        <span v-if="intentHint" class="intent-hint" :class="`intent-${intent}`">
+          → {{ intentHint }}
+        </span>
       </div>
     </el-card>
 
@@ -112,10 +114,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MagicStick, Loading } from '@element-plus/icons-vue'
+import { MagicStick, Loading, Promotion } from '@element-plus/icons-vue'
 import api from '@/api'
 
 const CHAT_STORAGE_KEY = 'weight-health-chat-history'
@@ -137,6 +139,45 @@ const quickActions = [
   '最近饮食有什么问题吗？',
   '明天体重会涨还是跌？',
 ]
+
+// ── Intent detection (single send button) ──
+function detectIntent(text: string, hasImage: boolean): 'analyze' | 'chat' {
+  const t = (text || '').trim()
+  // Any uploaded image → must go through analyze (multimodal)
+  if (hasImage) return 'analyze'
+  // Multi-date weight entries → analyze (batch fill path)
+  if (t && extractMultiDayData(t).length >= 1) return 'analyze'
+  // Standalone weight number → analyze
+  if (/(\d{2,3}(?:\.\d+)?)\s*(?:kg|公斤|斤)/.test(t)) return 'analyze'
+  // Food / meal / bowel / period keywords → analyze (will save a record)
+  if (/[早午晚]餐|[早午晚]饭|吃了|喝了|加餐|零食|夜宵|排便|拉了|拉屎|大便|月经|生理期|大姨妈/.test(t)) return 'analyze'
+  // Pure question → chat
+  if (/[?？]/.test(t)) return 'chat'
+  if (/(为什么|怎么|咋|哪|啥|什么|是不是|能否|会不会|怎样|如何|几|多少)/.test(t)) return 'chat'
+  // Default: short question-like → chat, long descriptive → analyze
+  if (t.length < 30 && !/\d/.test(t)) return 'chat'
+  return 'analyze'
+}
+
+const intent = computed<'analyze' | 'chat' | null>(() => {
+  const t = nlText.value.trim()
+  if (!t && !imageList.value.length) return null
+  return detectIntent(t, imageList.value.length > 0)
+})
+const intentHint = computed(() => {
+  if (intent.value === 'analyze') return '智能分析（将解析饮食/热量/多日体重）'
+  if (intent.value === 'chat') return '提问聊天'
+  return ''
+})
+const canSend = computed(() => nlText.value.trim().length > 0 || imageList.value.length > 0)
+const anyLoading = computed(() => aiLoading.value || chatLoading.value)
+
+function useQuickAction(qa: string) {
+  nlText.value = qa
+  // Quick actions are questions, default to chat intent — don't auto-send so
+  // the user can edit. Just trigger the reactive hint update by leaving
+  // the value change; intent will be picked up by the button label.
+}
 
 // ── Persistent history (V2) ──
 function loadHistory() {
@@ -317,6 +358,10 @@ async function onAiAnalyze() {
   if (!nlText.value.trim() && !imageList.value.length) { ElMessage.warning('请先输入文字或粘贴图片'); return }
 
   const text = nlText.value.trim()
+  // Mirror user message into chat history so it shows alongside chat replies
+  const imgs = imageList.value.length ? [...imageList.value] : []
+  chatMessages.value.push({ role: 'user', content: text, images: imgs })
+  await nextTick(); scrollChat()
 
   // ── V2: Multi-date backfill path ──
   const multiDayItems = extractMultiDayData(text)
@@ -329,18 +374,24 @@ async function onAiAnalyze() {
       try {
         await doBatchFill(multiDayItems, existingMap)
       } catch {
-        return // user cancelled
+        // User cancelled: drop the placeholder user message we pushed earlier
+        chatMessages.value.pop()
+        return
       }
     } else {
       // All new dates → fill directly
       const { data } = await api.batchFill(multiDayItems)
       ElMessage.success(`已回填 ${data.total_created || multiDayItems.length} 天体重数据`)
+      chatMessages.value.push({ role: 'assistant', content: `✅ 体重已回填 ${data.total_created || multiDayItems.length} 天` })
     }
 
     // After batch fill, check if there's food content worth analyzing
     const hasMealContent = /[早午晚]餐|[早午晚饭]|吃了|喝了|加餐|零食|夜宵|麻辣|炒|煮|烤|蒸|拌|米饭|面|饼|包子|饺子/.test(text)
     if (!hasMealContent && !imageList.value.length) {
       nlText.value = ''
+      imageList.value = []
+      chatMessages.value.push({ role: 'assistant', content: `✅ 体重已回填${multiDayItems.length > 1 ? `（${multiDayItems.length} 天）` : ''}` })
+      await nextTick(); scrollChat()
       return // pure weight entry, no AI analysis needed
     }
 
@@ -356,10 +407,15 @@ async function onAiAnalyze() {
       aiResult.value = data
       savedDate.value = data.structured?.record_date || latestDate
       ElMessage.success('饮食分析完成，点击「保存记录」可补充饮食数据')
+      const summary = [data.weight_analysis, data.weight_prediction, data.suggestions].filter(Boolean).join('\n\n')
+      if (summary) chatMessages.value.push({ role: 'assistant', content: summary })
     } catch (e: any) {
+      chatMessages.value.push({ role: 'assistant', content: `分析失败：${e.response?.data?.detail || e.message}` })
       ElMessage.warning('饮食分析失败，但体重数据已回填')
     } finally { aiLoading.value = false }
     nlText.value = ''
+    imageList.value = []
+    await nextTick(); scrollChat()
     return
   }
 
@@ -382,9 +438,24 @@ async function onAiAnalyze() {
     } else {
       ElMessage.warning('AI 未返回结构化结果')
     }
+    // Push summary into chat history
+    const summary = [data.weight_analysis, data.weight_prediction, data.suggestions].filter(Boolean).join('\n\n')
+    if (summary) chatMessages.value.push({ role: 'assistant', content: summary })
   } catch (e: any) {
+    chatMessages.value.push({ role: 'assistant', content: `出错了：${e.response?.data?.detail || e.message}` })
     ElMessage.error(`分析失败：${e.response?.data?.detail || e.message}`)
   } finally { aiLoading.value = false }
+  // Clear input + images after analyze
+  nlText.value = ''
+  imageList.value = []
+  await nextTick(); scrollChat()
+}
+
+// ---- Unified send (auto-routes to analyze or chat) ----
+async function onSendAI() {
+  if (!canSend.value || anyLoading.value) return
+  if (intent.value === 'analyze') return onAiAnalyze()
+  return onSendChat()
 }
 
 // ---- Save to record ----
@@ -508,4 +579,13 @@ function jumpToToday() {
   background: var(--brand-200); color: var(--brand-900);
   transform: translateY(-1px);
 }
+
+/* ── Intent hint next to send button ── */
+.intent-hint {
+  font-size: 13px;
+  color: var(--brand-700);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.intent-hint.intent-chat { color: #909399; }
 </style>
