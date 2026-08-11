@@ -14,6 +14,18 @@ from app.services import ai_provider
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
+# Fields that must NEVER be sent inside an LLM prompt (they would leak to the
+# third-party model provider).
+_SENSITIVE_PROFILE_FIELDS = ("llm_api_key", "vision_api_key")
+
+
+def _sanitize_profile_for_prompt(profile: UserProfile) -> Dict[str, Any]:
+    """Dump profile for prompt context, stripping all secret fields."""
+    d = profile.model_dump()
+    for k in _SENSITIVE_PROFILE_FIELDS:
+        d.pop(k, None)
+    return d
+
 
 def _serialize_recent(records: List[DailyRecord], session: Session) -> List[Dict[str, Any]]:
     out = []
@@ -48,9 +60,7 @@ async def analyze(payload: dict, session: Session = Depends(get_session)):
     from app.db import ensure_user_profile
     ensure_user_profile(session)
     profile = session.get(UserProfile, 1)
-    profile_dict = profile.model_dump()
-    # Never leak raw key to downstream context or logs.
-    profile_dict.pop("llm_api_key", None)
+    profile_dict = _sanitize_profile_for_prompt(profile)
 
     # Recent 7 records excluding target date, newest first.
     recent = session.exec(
@@ -109,8 +119,7 @@ async def chat(payload: dict, session: Session = Depends(get_session)):
     from app.db import ensure_user_profile
     ensure_user_profile(session)
     profile = session.get(UserProfile, 1)
-    profile_dict = profile.model_dump()
-    profile_dict.pop("llm_api_key", None)
+    profile_dict = _sanitize_profile_for_prompt(profile)
 
     recent = session.exec(
         select(DailyRecord)

@@ -108,3 +108,24 @@ class FoodLibraryResponse(SQLModel):
 class FoodSearchResult(SQLModel):
     items: List[FoodLibraryResponse] = []
     total: int = 0
+
+
+# ── Batch Fill ──
+class BatchFillItem(SQLModel):
+    record_date: str
+    weight_kg: Optional[float] = None
+    bowel_movement: str = "unknown"
+
+
+class BatchFillResultItem(SQLModel):
+    record_date: str
+    weight_kg: Optional[float] = None
+    bowel_movement: str = "unknown"
+    action: str  # "created" | "updated" | "skipped"
+
+
+class BatchFillResult(SQLModel):
+    items: List[BatchFillResultItem] = []
+    total_created: int = 0
+    total_updated: int = 0
+    total_skipped: int = 0

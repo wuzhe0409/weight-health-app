@@ -52,6 +52,12 @@ export const api = {
 
   // ── Vision Food Recognition (V2) ──
   visionFood: (image: string) => http.post('/ai/vision-food', { image }),
+
+  // ── Batch Fill (V2) ──
+  batchFill: (items: { record_date: string; weight_kg: number | null; bowel_movement: string }[]) =>
+    http.post('/records/batch-fill', items),
+
+  batchExists: (dates: string[]) => http.post('/records/exists', dates),
 }
 
 export default api

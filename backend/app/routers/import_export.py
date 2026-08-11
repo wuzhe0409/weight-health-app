@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from app.db import get_session
 from app.models import DailyRecord
-from app.serialize import record_to_dict
+from app.serialize import records_to_dicts
 from app.services.history_importer import import_history
 
 router = APIRouter(tags=["import_export"])
@@ -31,7 +31,7 @@ def import_history_endpoint(
 @router.get("/api/export")
 def export_data(format: str = "json", session: Session = Depends(get_session)):
     records = session.exec(select(DailyRecord).order_by(DailyRecord.record_date)).all()
-    data = [record_to_dict(r, session) for r in records]
+    data = records_to_dicts(records, session)
     if format == "json":
         return JSONResponse(content=data)
     if format == "csv":

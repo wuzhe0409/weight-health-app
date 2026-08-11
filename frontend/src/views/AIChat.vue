@@ -114,7 +114,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Loading } from '@element-plus/icons-vue'
 import api from '@/api'
 
@@ -220,9 +220,150 @@ async function onSendChat() {
   }
 }
 
+// ── V2: Multi-date extraction & batch fill ──
+interface MultiDayItem {
+  record_date: string
+  weight_kg: number | null
+  bowel_movement: string
+}
+
+function extractMultiDayData(text: string): MultiDayItem[] {
+  const now = new Date()
+  const year = now.getFullYear()
+  // Match date patterns: 8.8号 / 8月8日 / 8/8 / 8.8
+  // Group 3 captures the optional 日/号 marker — used to filter false positives
+  // like "48.3" in weight "48.3".
+  const datePattern = /(\d{1,2})[\.月\/]\s*(\d{1,2})\s*([日号]?)/g
+  const matches: { index: number; month: number; day: number; end: number }[] = []
+  let m
+  while ((m = datePattern.exec(text)) !== null) {
+    const month = parseInt(m[1])
+    const day = parseInt(m[2])
+    const hasMarker = !!m[3]
+    // Accept only if explicitly marked (日/号) OR both numbers are in valid
+    // date ranges (month 1-12, day 1-31). Otherwise it's likely a weight like
+    // "48.3" or "100.5", not a date.
+    if (hasMarker || (month >= 1 && month <= 12 && day >= 1 && day <= 31)) {
+      matches.push({ index: m.index, month, day, end: m.index + m[0].length })
+    }
+  }
+
+  if (matches.length === 0) return []
+
+  const results: MultiDayItem[] = []
+  for (let i = 0; i < matches.length; i++) {
+    const { month, day, end } = matches[i]
+    const recordDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    // Segment between this date and the next (or end of text)
+    const nextStart = i + 1 < matches.length ? matches[i + 1].index : text.length
+    const segment = text.slice(end, nextStart)
+
+    // First number in the segment (2-3 digits, optional decimal)
+    const weightMatch = segment.match(/(\d{2,3}(?:[\.\,]\d+)?)/)
+    const weight = weightMatch ? parseFloat(weightMatch[1].replace(',', '.')) : null
+
+    // Bowel detection
+    let bowel = 'unknown'
+    if (/没(?:拉|排便|上)|未(?:拉|排便)/.test(segment)) bowel = 'no'
+    else if (/拉(?:了|粑粑|屎)|排便|上了|上厕所/.test(segment)) bowel = 'yes'
+
+    results.push({ record_date: recordDate, weight_kg: weight, bowel_movement: bowel })
+  }
+  return results
+}
+
+async function checkExistingDates(dates: string[]): Promise<Map<string, boolean>> {
+  // Single batch request instead of N serial GET /records/{date} calls.
+  const result = new Map<string, boolean>(dates.map(d => [d, false]))
+  try {
+    const { data } = await api.batchExists(dates)
+    for (const d of data.existing || []) result.set(d, true)
+  } catch { /* fall back to all-new on error */ }
+  return result
+}
+
+async function doBatchFill(items: MultiDayItem[], existingMap: Map<string, boolean>) {
+  // Build confirm message lines
+  const lines = items.map(item => {
+    const exists = existingMap.get(item.record_date)
+    const prefix = exists ? '⚠️' : '✅'
+    const status = exists ? '已有记录 → 将覆盖体重/排便' : '新建记录'
+    const bowelLabel = item.bowel_movement === 'yes' ? '已排便' : item.bowel_movement === 'no' ? '未排便' : '无排便信息'
+    return `${prefix} ${item.record_date}（${status}）：体重 ${item.weight_kg ?? '—'}kg，${bowelLabel}`
+  }).join('\n')
+
+  await ElMessageBox.confirm(lines, '确认批量回填数据', {
+    confirmButtonText: '确认回填',
+    cancelButtonText: '取消',
+    type: 'warning',
+    distinguishCancelAndClose: true,
+    closeOnClickModal: false,
+  })
+
+  const { data } = await api.batchFill(items)
+  const created = data.total_created || 0
+  const updated = data.total_updated || 0
+  const skipped = data.total_skipped || 0
+
+  const parts: string[] = []
+  if (created > 0) parts.push(`新建 ${created} 条`)
+  if (updated > 0) parts.push(`更新 ${updated} 条`)
+  if (skipped > 0) parts.push(`跳过 ${skipped} 条（已锁定）`)
+  ElMessage.success(parts.join('，'))
+}
+
 // ---- AI Analyze ----
 async function onAiAnalyze() {
   if (!nlText.value.trim() && !imageList.value.length) { ElMessage.warning('请先输入文字或粘贴图片'); return }
+
+  const text = nlText.value.trim()
+
+  // ── V2: Multi-date backfill path ──
+  const multiDayItems = extractMultiDayData(text)
+  if (multiDayItems.length >= 1) {
+    const existingMap = await checkExistingDates(multiDayItems.map(i => i.record_date))
+    const hasExisting = multiDayItems.some(i => existingMap.get(i.record_date))
+
+    if (hasExisting) {
+      // Some dates have existing records → show confirm dialog
+      try {
+        await doBatchFill(multiDayItems, existingMap)
+      } catch {
+        return // user cancelled
+      }
+    } else {
+      // All new dates → fill directly
+      const { data } = await api.batchFill(multiDayItems)
+      ElMessage.success(`已回填 ${data.total_created || multiDayItems.length} 天体重数据`)
+    }
+
+    // After batch fill, check if there's food content worth analyzing
+    const hasMealContent = /[早午晚]餐|[早午晚饭]|吃了|喝了|加餐|零食|夜宵|麻辣|炒|煮|烤|蒸|拌|米饭|面|饼|包子|饺子/.test(text)
+    if (!hasMealContent && !imageList.value.length) {
+      nlText.value = ''
+      return // pure weight entry, no AI analysis needed
+    }
+
+    // Has food content → also do AI analysis for the latest date
+    aiLoading.value = true
+    try {
+      const latestDate = multiDayItems[multiDayItems.length - 1].record_date
+      const { data } = await api.aiAnalyze({
+        text,
+        record_date: latestDate,
+        images: imageList.value.map(i => i.dataUrl),
+      })
+      aiResult.value = data
+      savedDate.value = data.structured?.record_date || latestDate
+      ElMessage.success('饮食分析完成，点击「保存记录」可补充饮食数据')
+    } catch (e: any) {
+      ElMessage.warning('饮食分析失败，但体重数据已回填')
+    } finally { aiLoading.value = false }
+    nlText.value = ''
+    return
+  }
+
+  // ── Normal single-date AI analysis (unchanged) ──
   aiLoading.value = true
   try {
     const { data } = await api.aiAnalyze({

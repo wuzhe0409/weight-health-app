@@ -191,12 +191,12 @@ async function loadProfile() {
   } catch (e) { /* ignore */ }
 }
 async function saveProfile() {
-  const payload = { ...profile }
-  // Remove masked placeholder so backend keeps existing key.
-  if (llm.llm_api_key.includes('*')) {
-    payload.llm_api_key = undefined as any
-  }
-  await api.updateProfile({ ...payload, ...llm })
+  const payload: any = { ...profile, ...llm }
+  // Strip masked placeholders AFTER merging — otherwise {...payload, ...llm}
+  // would re-introduce the masked key and overwrite the real one.
+  if (typeof payload.llm_api_key === 'string' && payload.llm_api_key.includes('*')) delete payload.llm_api_key
+  if (typeof payload.vision_api_key === 'string' && payload.vision_api_key.includes('*')) delete payload.vision_api_key
+  await api.updateProfile(payload)
   ElMessage.success('设置已保存')
   await loadProfile()
 }

@@ -52,8 +52,16 @@ def update_profile(payload: dict, session: Session = Depends(get_session)):
     p = session.get(UserProfile, 1)
     for k in PROFILE_FIELDS:
         if k in payload:
-            setattr(p, k, payload[k])
+            v = payload[k]
+            # Defense-in-depth: never persist a masked placeholder as a real key.
+            if k in ("llm_api_key", "vision_api_key") and isinstance(v, str) and "*" in v:
+                continue
+            setattr(p, k, v)
     p.updated_at = datetime.now().isoformat(timespec="seconds")
     session.commit()
     session.refresh(p)
-    return p.model_dump()
+    d = p.model_dump()
+    # Keep response consistent with GET: never return raw keys.
+    d["llm_api_key"] = _mask_key(d.get("llm_api_key"))
+    d["vision_api_key"] = _mask_key(d.get("vision_api_key"))
+    return d
