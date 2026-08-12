@@ -115,12 +115,18 @@ class BatchFillItem(SQLModel):
     record_date: str
     weight_kg: Optional[float] = None
     bowel_movement: str = "unknown"
+    period_status: Optional[str] = None
+    period_day: Optional[int] = None
+    period_days_until: Optional[int] = None
 
 
 class BatchFillResultItem(SQLModel):
     record_date: str
     weight_kg: Optional[float] = None
     bowel_movement: str = "unknown"
+    period_status: Optional[str] = None
+    period_day: Optional[int] = None
+    period_days_until: Optional[int] = None
     action: str  # "created" | "updated" | "skipped"
 
 

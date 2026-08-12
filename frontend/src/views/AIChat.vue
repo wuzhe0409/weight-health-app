@@ -150,7 +150,7 @@ function detectIntent(text: string, hasImage: boolean): 'analyze' | 'chat' {
   // Standalone weight number → analyze
   if (/(\d{2,3}(?:\.\d+)?)\s*(?:kg|公斤|斤)/.test(t)) return 'analyze'
   // Food / meal / bowel / period keywords → analyze (will save a record)
-  if (/[早午晚]餐|[早午晚]饭|吃了|喝了|加餐|零食|夜宵|排便|拉了|拉屎|大便|月经|生理期|大姨妈/.test(t)) return 'analyze'
+  if (/[早午晚]餐|[早午晚]饭|吃了|喝了|加餐|零食|夜宵|排便|拉了|拉屎|大便|月经|生理期|大姨妈|例假|经期/.test(t)) return 'analyze'
   // Pure question → chat
   if (/[?？]/.test(t)) return 'chat'
   if (/(为什么|怎么|咋|哪|啥|什么|是不是|能否|会不会|怎样|如何|几|多少)/.test(t)) return 'chat'
@@ -266,30 +266,77 @@ interface MultiDayItem {
   record_date: string
   weight_kg: number | null
   bowel_movement: string
+  period_status: string | null
+  period_day: number | null
+  period_days_until: number | null
+}
+
+// Detect period status from a text segment.
+// Returns [period_status, period_day, period_days_until] — same shape as nlp_parser.
+function extractPeriod(text: string): [string | null, number | null, number | null] {
+  let m
+  // 第X天 / 第一/二/三/四天 / X天 (when X is small integer 1-9)
+  if ((m = text.match(/月经第\s*(\d+)\s*天/))) return [`period_day_${m[1]}`, parseInt(m[1]), null]
+  if ((m = text.match(/月经第一\s*天/))) return ['period_day_1', 1, null]
+  if ((m = text.match(/月经第二\s*天/))) return ['period_day_2', 2, null]
+  if ((m = text.match(/月经第三\s*天/))) return ['period_day_3', 3, null]
+  if ((m = text.match(/月经第四\s*天/))) return ['period_day_4', 4, null]
+  if ((m = text.match(/月经第五\s*天/))) return ['period_day_5', 5, null]
+  if ((m = text.match(/还有\s*(\d+)\s*天.*?(?:来|例假|月经|大姨妈)/))) return [`pre_period_${m[1]}_days`, null, parseInt(m[1])]
+  if (/来例假|月经来了|生理期到了|大姨妈来了|来大姨妈|例假来了|经期来了/.test(text)) return ['period', null, null]
+  if (/结束后|生理期结束|例假结束|月经结束|经期结束/.test(text)) return ['period_ended', null, null]
+  return [null, null, null]
 }
 
 function extractMultiDayData(text: string): MultiDayItem[] {
   const now = new Date()
   const year = now.getFullYear()
-  // Match date patterns: 8.8号 / 8月8日 / 8/8 / 8.8
-  // Group 3 captures the optional 日/号 marker — used to filter false positives
-  // like "48.3" in weight "48.3".
-  const datePattern = /(\d{1,2})[\.月\/]\s*(\d{1,2})\s*([日号]?)/g
+  const currentMonth = now.getMonth() + 1
+  // Two passes:
+  //  1. Full dates: 8.8号 / 8月8日 / 8/8 / 8.8
+  //  2. Single day: 10号 / 5日 → current month + day
+  // Then sort by position in the original text.
   const matches: { index: number; month: number; day: number; end: number }[] = []
-  let m
-  while ((m = datePattern.exec(text)) !== null) {
+  let m: RegExpExecArray | null
+
+  // Pass 1: full dates with month+day separator
+  const fullPattern = /(\d{1,2})[\.月\/]\s*(\d{1,2})\s*([日号]?)/g
+  while ((m = fullPattern.exec(text)) !== null) {
     const month = parseInt(m[1])
     const day = parseInt(m[2])
     const hasMarker = !!m[3]
-    // Accept only if explicitly marked (日/号) OR both numbers are in valid
-    // date ranges (month 1-12, day 1-31). Otherwise it's likely a weight like
-    // "48.3" or "100.5", not a date.
+    // Accept only if explicitly marked (日/号) OR both numbers in valid range.
     if (hasMarker || (month >= 1 && month <= 12 && day >= 1 && day <= 31)) {
       matches.push({ index: m.index, month, day, end: m.index + m[0].length })
     }
   }
 
+  // Pass 2: short form like "10号" / "5日" → current month
+  const shortPattern = /(?<![\d.月/])(\d{1,2})\s*([日号])(?![\d])/g
+  while ((m = shortPattern.exec(text)) !== null) {
+    const day = parseInt(m[1])
+    if (day < 1 || day > 31) continue
+    const idx = m.index
+    // Skip if this is part of a full date already captured by pass 1
+    const overlap = matches.some(x => idx >= x.index && idx < x.end)
+    if (!overlap) {
+      matches.push({ index: idx, month: currentMonth, day, end: idx + m[0].length })
+    }
+  }
+
   if (matches.length === 0) return []
+  // Sort by original text position (so segments are in order)
+  matches.sort((a, b) => a.index - b.index)
+
+  // Global bowel detection (for patterns like "10号和11号都没有拉粑粑")
+  let globalBowel = 'unknown'
+  // Match both 没拉 and 没有拉 (没+有+拉 where 没 is separated by 有 from 拉)
+  if (/(?:没(?:拉|排便|上)|未(?:拉|排便)|没有(?:拉|排便|上))/.test(text)) globalBowel = 'no'
+  else if (/(?:拉(?:了|粑粑|屎)|排便|上了|上厕所)/.test(text)) globalBowel = 'yes'
+
+  // Global period detection (for patterns like "10号和11号都来例假")
+  const [gStatus, gDay, gUntil] = extractPeriod(text)
+  const hasGlobalPeriod = !!gStatus
 
   const results: MultiDayItem[] = []
   for (let i = 0; i < matches.length; i++) {
@@ -299,16 +346,30 @@ function extractMultiDayData(text: string): MultiDayItem[] {
     const nextStart = i + 1 < matches.length ? matches[i + 1].index : text.length
     const segment = text.slice(end, nextStart)
 
-    // First number in the segment (2-3 digits, optional decimal)
+    // First number in the segment (2-3 digits, optional decimal) — weight
     const weightMatch = segment.match(/(\d{2,3}(?:[\.\,]\d+)?)/)
     const weight = weightMatch ? parseFloat(weightMatch[1].replace(',', '.')) : null
 
-    // Bowel detection
+    // Per-segment bowel takes precedence; fall back to global detection
     let bowel = 'unknown'
-    if (/没(?:拉|排便|上)|未(?:拉|排便)/.test(segment)) bowel = 'no'
-    else if (/拉(?:了|粑粑|屎)|排便|上了|上厕所/.test(segment)) bowel = 'yes'
+    if (/(?:没(?:拉|排便|上)|未(?:拉|排便)|没有(?:拉|排便|上))/.test(segment)) bowel = 'no'
+    else if (/(?:拉(?:了|粑粑|屎)|排便|上了|上厕所)/.test(segment)) bowel = 'yes'
+    if (bowel === 'unknown') bowel = globalBowel
 
-    results.push({ record_date: recordDate, weight_kg: weight, bowel_movement: bowel })
+    // Per-segment period takes precedence; fall back to global detection
+    const [sStatus, sDay, sUntil] = extractPeriod(segment)
+    const period_status = sStatus || (hasGlobalPeriod ? gStatus : null)
+    const period_day = sDay != null ? sDay : (hasGlobalPeriod ? gDay : null)
+    const period_days_until = sUntil != null ? sUntil : (hasGlobalPeriod ? gUntil : null)
+
+    results.push({
+      record_date: recordDate,
+      weight_kg: weight,
+      bowel_movement: bowel,
+      period_status,
+      period_day,
+      period_days_until,
+    })
   }
   return results
 }
@@ -325,12 +386,26 @@ async function checkExistingDates(dates: string[]): Promise<Map<string, boolean>
 
 async function doBatchFill(items: MultiDayItem[], existingMap: Map<string, boolean>) {
   // Build confirm message lines
+  const periodLabel = (item: MultiDayItem) => {
+    if (!item.period_status) return ''
+    if (item.period_status === 'period') return '经期开始'
+    if (item.period_status === 'period_ended') return '经期结束'
+    if (item.period_day != null) return `经期第${item.period_day}天`
+    if (item.period_days_until != null) return `距经期${item.period_days_until}天`
+    return ''
+  }
   const lines = items.map(item => {
     const exists = existingMap.get(item.record_date)
     const prefix = exists ? '⚠️' : '✅'
-    const status = exists ? '已有记录 → 将覆盖体重/排便' : '新建记录'
-    const bowelLabel = item.bowel_movement === 'yes' ? '已排便' : item.bowel_movement === 'no' ? '未排便' : '无排便信息'
-    return `${prefix} ${item.record_date}（${status}）：体重 ${item.weight_kg ?? '—'}kg，${bowelLabel}`
+    const status = exists ? '已有记录 → 将覆盖' : '新建记录'
+    // Show only fields that are being updated (avoid noise)
+    const parts: string[] = []
+    if (item.weight_kg != null) parts.push(`体重 ${item.weight_kg}kg`)
+    if (item.bowel_movement === 'yes') parts.push('已排便')
+    else if (item.bowel_movement === 'no') parts.push('未排便')
+    const p = periodLabel(item)
+    if (p) parts.push(p)
+    return `${prefix} ${item.record_date}（${status}）：${parts.join('，') || '（无内容）'}`
   }).join('\n')
 
   await ElMessageBox.confirm(lines, '确认批量回填数据', {

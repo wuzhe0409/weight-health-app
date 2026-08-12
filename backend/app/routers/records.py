@@ -160,11 +160,11 @@ def batch_exists(dates: List[str], session: Session = Depends(get_session)):
 
 @router.post("/batch-fill", response_model=BatchFillResult)
 def batch_fill(items: List[BatchFillItem], session: Session = Depends(get_session)):
-    """Bulk fill weight/bowel data for multiple dates.
+    """Bulk fill weight/bowel/period data for multiple dates.
 
     For each date:
     - If no record exists → create one with the given fields.
-    - If a record exists and is NOT locked → update weight & bowel (preserve other fields).
+    - If a record exists and is NOT locked → update only the provided fields.
     - If a record exists and IS locked → skip it (return as skipped).
     """
     results: List[dict] = []
@@ -183,6 +183,9 @@ def batch_fill(items: List[BatchFillItem], session: Session = Depends(get_sessio
                 record_date=item.record_date,
                 weight_kg=item.weight_kg,
                 bowel_movement=item.bowel_movement,
+                period_status=item.period_status,
+                period_day=item.period_day,
+                period_days_until=item.period_days_until,
                 data_status="estimated",
             )
             session.add(rec)
@@ -197,6 +200,12 @@ def batch_fill(items: List[BatchFillItem], session: Session = Depends(get_sessio
                 rec.weight_kg = item.weight_kg
             if item.bowel_movement and item.bowel_movement != "unknown":
                 rec.bowel_movement = item.bowel_movement
+            if item.period_status is not None:
+                rec.period_status = item.period_status
+            if item.period_day is not None:
+                rec.period_day = item.period_day
+            if item.period_days_until is not None:
+                rec.period_days_until = item.period_days_until
             action = "updated"
             updated += 1
 
@@ -204,7 +213,10 @@ def batch_fill(items: List[BatchFillItem], session: Session = Depends(get_sessio
         results.append({
             "record_date": item.record_date,
             "weight_kg": rec.weight_kg,
-            "bowel_movement": rec.bowel_movement if action != "skipped" else rec.bowel_movement,
+            "bowel_movement": rec.bowel_movement,
+            "period_status": rec.period_status,
+            "period_day": rec.period_day,
+            "period_days_until": rec.period_days_until,
             "action": action,
         })
 
