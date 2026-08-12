@@ -1,0 +1,5 @@
+pythonnet>=3.0.3
+pywin32>=306
+pyinstaller>=6.0
+pywebview[edgechromium]>=5.0
+inno-setup>=0.1  ; optional, only if you want to build the installer
