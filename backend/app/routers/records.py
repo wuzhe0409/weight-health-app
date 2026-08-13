@@ -1,17 +1,17 @@
-"""Records API: parse (preview), save, query, detail, revision."""
+"""Records API: parse (preview), save, query, detail, revision, batch-fill."""
 from __future__ import annotations
 
 import json
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.db import get_session
 from app.models import DailyRecord, FoodEntry, AuditLog
-from app.schemas import RecordCreate, ParsePreview
-from app.serialize import record_to_dict
+from app.schemas import RecordCreate, ParsePreview, BatchFillItem, BatchFillResult
+from app.serialize import record_to_dict, records_to_dicts
 from app.services.ai_provider import get_provider
 
 router = APIRouter(prefix="/api/records", tags=["records"])
@@ -104,7 +104,7 @@ def list_records(
         stmt = stmt.where(DailyRecord.record_date <= end)
     stmt = stmt.order_by(DailyRecord.record_date)
     records = session.exec(stmt).all()
-    return [record_to_dict(r, session) for r in records]
+    return records_to_dicts(records, session)
 
 
 @router.get("/{record_date}", response_model=dict)
@@ -145,3 +145,85 @@ def add_revision(record_date: str, data: RecordCreate, session: Session = Depend
     ))
     session.commit()
     return record_to_dict(rec, session)
+
+
+@router.post("/exists", response_model=dict)
+def batch_exists(dates: List[str], session: Session = Depends(get_session)):
+    """Check which dates already have records. One query instead of N round-trips."""
+    if len(dates) > 90:
+        raise HTTPException(status_code=422, detail="too many dates (max 90)")
+    found = session.exec(
+        select(DailyRecord.record_date).where(DailyRecord.record_date.in_(dates))
+    ).all()
+    return {"existing": sorted(found)}
+
+
+@router.post("/batch-fill", response_model=BatchFillResult)
+def batch_fill(items: List[BatchFillItem], session: Session = Depends(get_session)):
+    """Bulk fill weight/bowel/period data for multiple dates.
+
+    For each date:
+    - If no record exists → create one with the given fields.
+    - If a record exists and is NOT locked → update only the provided fields.
+    - If a record exists and IS locked → skip it (return as skipped).
+    """
+    results: List[dict] = []
+    updated = 0
+    created = 0
+    skipped = 0
+
+    for item in items:
+        rec = session.exec(
+            select(DailyRecord).where(DailyRecord.record_date == item.record_date)
+        ).first()
+
+        action = ""
+        if rec is None:
+            rec = DailyRecord(
+                record_date=item.record_date,
+                weight_kg=item.weight_kg,
+                bowel_movement=item.bowel_movement,
+                period_status=item.period_status,
+                period_day=item.period_day,
+                period_days_until=item.period_days_until,
+                data_status="estimated",
+            )
+            session.add(rec)
+            action = "created"
+            created += 1
+        elif rec.is_locked == 1:
+            action = "skipped"
+            skipped += 1
+        else:
+            # Only overwrite fields if caller provides non-null / non-default values
+            if item.weight_kg is not None:
+                rec.weight_kg = item.weight_kg
+            if item.bowel_movement and item.bowel_movement != "unknown":
+                rec.bowel_movement = item.bowel_movement
+            if item.period_status is not None:
+                rec.period_status = item.period_status
+            if item.period_day is not None:
+                rec.period_day = item.period_day
+            if item.period_days_until is not None:
+                rec.period_days_until = item.period_days_until
+            action = "updated"
+            updated += 1
+
+        session.flush()
+        results.append({
+            "record_date": item.record_date,
+            "weight_kg": rec.weight_kg,
+            "bowel_movement": rec.bowel_movement,
+            "period_status": rec.period_status,
+            "period_day": rec.period_day,
+            "period_days_until": rec.period_days_until,
+            "action": action,
+        })
+
+    session.commit()
+    return BatchFillResult(
+        items=results,
+        total_created=created,
+        total_updated=updated,
+        total_skipped=skipped,
+    )

@@ -2,7 +2,7 @@ name: Build Windows Desktop App (Friend Edition)
 
 on:
   push:
-    branches: [main, v2-develop]
+    branches: [main, v2-develop, feature/clean-build-pipeline]
   workflow_dispatch:
 
 jobs:
@@ -50,31 +50,59 @@ jobs:
 
       - name: Prepare
         shell: powershell
+        env:
+          BUILD_DIST: '1'
         run: |
           New-Item -ItemType Directory -Force -Path backend\static
           Copy-Item -Recurse -Force frontend\dist\* backend\static\
           Copy-Item -Force desktop\desktop_launcher.py backend\app\
-          New-Item -ItemType Directory -Force -Path backend\seed_clean
-          Set-Content -Path backend\seed_clean\README.txt -Value "clean"
+          # Only create seed_clean placeholder when NOT in clean dist mode
+          if ($env:BUILD_DIST -ne '1') {
+            New-Item -ItemType Directory -Force -Path backend\seed_clean
+            Set-Content -Path backend\seed_clean\README.txt -Value "clean"
+          }
 
       - name: Build exe
         shell: powershell
+        env:
+          # BUILD_DIST=1 = clean distribution: do NOT --add-data seed/, friends get empty DB
+          # Default 0 (unset) keeps seed for developer self-builds via --add-data
+          BUILD_DIST: '1'
         run: |
           cd backend
-          python -m PyInstaller --name WeightHealth-Friend --onedir --windowed `
-            --add-data "static;static" `
-            --add-data "seed_clean;seed" `
-            --add-data "schema.sql;." `
-            --hidden-import sqlmodel `
-            --hidden-import fastapi `
-            --hidden-import uvicorn `
-            --hidden-import uvicorn.loops.auto `
-            --hidden-import uvicorn.protocols.http.auto `
-            --hidden-import aiofiles `
-            --hidden-import pydantic `
-            --hidden-import webview `
-            --collect-all app `
-            app\desktop_launcher.py
+          # Build PyInstaller args conditionally based on BUILD_DIST
+          if ($env:BUILD_DIST -eq '1') {
+            Write-Host "[BUILD_DIST=1] Clean distribution - skipping seed/ to avoid leaking developer data"
+            pyinstaller --name WeightHealth-Friend --onedir --windowed `
+              --add-data "static;static" `
+              --add-data "schema.sql;." `
+              --hidden-import sqlmodel `
+              --hidden-import fastapi `
+              --hidden-import uvicorn `
+              --hidden-import uvicorn.loops.auto `
+              --hidden-import uvicorn.protocols.http.auto `
+              --hidden-import aiofiles `
+              --hidden-import pydantic `
+              --hidden-import webview `
+              --collect-all app `
+              app\desktop_launcher.py
+          } else {
+            Write-Host "[BUILD_DIST unset] Developer build - including seed/"
+            pyinstaller --name WeightHealth-Friend --onedir --windowed `
+              --add-data "static;static" `
+              --add-data "seed_clean;seed" `
+              --add-data "schema.sql;." `
+              --hidden-import sqlmodel `
+              --hidden-import fastapi `
+              --hidden-import uvicorn `
+              --hidden-import uvicorn.loops.auto `
+              --hidden-import uvicorn.protocols.http.auto `
+              --hidden-import aiofiles `
+              --hidden-import pydantic `
+              --hidden-import webview `
+              --collect-all app `
+              app\desktop_launcher.py
+          }
 
       - name: Package
         shell: powershell
