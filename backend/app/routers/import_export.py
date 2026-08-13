@@ -4,6 +4,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
+from datetime import date as _date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response, JSONResponse
@@ -13,6 +15,19 @@ from app.db import get_session
 from app.models import DailyRecord, FoodEntry, WeightMeasurement, AuditLog
 from app.serialize import record_to_dict
 from app.services.history_importer import import_history
+
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _is_valid_date(s: str) -> bool:
+    """YYYY-MM-DD format AND real calendar date (rejects 2026-13-99 etc.)."""
+    if not DATE_PATTERN.match(s):
+        return False
+    try:
+        _date.fromisoformat(s)
+        return True
+    except ValueError:
+        return False
 
 router = APIRouter(tags=["import_export"])
 
@@ -92,10 +107,22 @@ async def import_backup_endpoint(
     }
 
     for rec in data:
-        date = rec.get("record_date")
-        if not date:
+        if not isinstance(rec, dict):
             result["errors"] += 1
-            result["details"].append({"record_date": None, "status": "error", "message": "missing record_date"})
+            result["details"].append({
+                "record_date": None,
+                "status": "error",
+                "message": f"each item must be an object, got {type(rec).__name__}",
+            })
+            continue
+        date = rec.get("record_date")
+        if not date or not isinstance(date, str) or not _is_valid_date(date):
+            result["errors"] += 1
+            result["details"].append({
+                "record_date": date,
+                "status": "error",
+                "message": "missing or invalid date format (expected YYYY-MM-DD with real calendar date)",
+            })
             continue
 
         existing = session.exec(
