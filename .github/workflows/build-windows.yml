@@ -2,7 +2,7 @@ name: Build Windows Desktop App (Friend Edition)
 
 on:
   push:
-    branches: [main, v2-develop]
+    branches: [main, v2-develop, feature/clean-build-pipeline]
   workflow_dispatch:
 
 jobs:
