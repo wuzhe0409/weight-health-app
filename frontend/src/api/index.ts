@@ -33,6 +33,11 @@ export const api = {
   exportData: (format = 'json') =>
     http.get(`/export?format=${format}`, { responseType: 'blob' }),
 
+  restoreBackup: (formData: FormData) =>
+    http.post('/import/backup', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+
   profile: () => http.get('/profile'),
 
   updateProfile: (data: any) => http.put('/profile', data),

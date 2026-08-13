@@ -5,13 +5,13 @@ import csv
 import io
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response, JSONResponse
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.models import DailyRecord
-from app.serialize import records_to_dicts
+from app.models import DailyRecord, FoodEntry, WeightMeasurement, AuditLog
+from app.serialize import record_to_dict
 from app.services.history_importer import import_history
 
 router = APIRouter(tags=["import_export"])
@@ -31,7 +31,7 @@ def import_history_endpoint(
 @router.get("/api/export")
 def export_data(format: str = "json", session: Session = Depends(get_session)):
     records = session.exec(select(DailyRecord).order_by(DailyRecord.record_date)).all()
-    data = records_to_dicts(records, session)
+    data = [record_to_dict(r, session) for r in records]
     if format == "json":
         return JSONResponse(content=data)
     if format == "csv":
@@ -52,3 +52,125 @@ def export_data(format: str = "json", session: Session = Depends(get_session)):
             ])
         return Response(content=output.getvalue(), media_type="text/csv")
     raise HTTPException(status_code=400, detail="format must be json or csv")
+
+
+@router.post("/api/import/backup")
+async def import_backup_endpoint(
+    file: UploadFile = File(...),
+    dry_run: bool = False,
+    session: Session = Depends(get_session),
+):
+    """Restore from a JSON backup file exported by /api/export.
+
+    Behaviour:
+    - Skips records whose record_date already exists in DB (no overwrite of
+      data the user has manually edited after the backup was made).
+    - Recreates the missing record plus its nested food_entries and
+      weight_measurements arrays.
+    - If dry_run=true, reports what would be restored without writing.
+
+    Returns: {"dry_run": bool, "restored": N, "skipped": M, "errors": K, "details": [...]}
+    """
+    if not file.filename or not file.filename.lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="Only .json backup files are supported")
+
+    raw = await file.read()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    if not isinstance(data, list):
+        raise HTTPException(status_code=400, detail="Backup file must be a JSON array of records")
+
+    result = {
+        "dry_run": dry_run,
+        "restored": 0,
+        "skipped": 0,
+        "errors": 0,
+        "details": [],
+    }
+
+    for rec in data:
+        date = rec.get("record_date")
+        if not date:
+            result["errors"] += 1
+            result["details"].append({"record_date": None, "status": "error", "message": "missing record_date"})
+            continue
+
+        existing = session.exec(
+            select(DailyRecord).where(DailyRecord.record_date == date)
+        ).first()
+        if existing is not None:
+            result["skipped"] += 1
+            result["details"].append({"record_date": date, "status": "skipped", "message": "already exists"})
+            continue
+
+        if dry_run:
+            result["restored"] += 1
+            result["details"].append({"record_date": date, "status": "would_restore"})
+            continue
+
+        try:
+            new_rec = DailyRecord(
+                record_date=date,
+                weight_kg=rec.get("weight_kg"),
+                bowel_movement=rec.get("bowel_movement", "unknown"),
+                period_status=rec.get("period_status"),
+                period_day=rec.get("period_day"),
+                period_days_until=rec.get("period_days_until"),
+                total_kcal_min=rec.get("total_kcal_min"),
+                total_kcal_max=rec.get("total_kcal_max"),
+                total_kcal_confirmed=rec.get("total_kcal_confirmed"),
+                protein_g=rec.get("protein_g"),
+                steps=rec.get("steps"),
+                water_ml=rec.get("water_ml"),
+                analysis=rec.get("analysis"),
+                notes=rec.get("notes"),
+                data_status=rec.get("data_status", "estimated"),
+                raw_input=rec.get("raw_input"),
+                source=rec.get("source") or "backup_restore",
+                is_locked=rec.get("is_locked", 0),
+            )
+            session.add(new_rec)
+            session.flush()
+
+            for idx, f in enumerate(rec.get("food_entries", []) or []):
+                session.add(FoodEntry(
+                    daily_record_id=new_rec.id,
+                    meal_type=f.get("meal_type", "snack"),
+                    food_name=f.get("food_name", ""),
+                    quantity_text=f.get("quantity_text", ""),
+                    kcal_source=f.get("kcal_source", "estimated"),
+                    sort_order=idx,
+                ))
+
+            for w in rec.get("weight_measurements", []) or []:
+                session.add(WeightMeasurement(
+                    measured_at=w.get("measured_at") or f"{date}T07:00:00",
+                    weight_kg=w.get("weight_kg", 0),
+                    condition=w.get("condition", "morning_fasted_after_urination"),
+                    daily_record_id=new_rec.id,
+                ))
+
+            result["restored"] += 1
+            result["details"].append({"record_date": date, "status": "restored"})
+        except Exception as e:
+            result["errors"] += 1
+            result["details"].append({"record_date": date, "status": "error", "message": str(e)})
+
+    if not dry_run:
+        session.add(AuditLog(
+            entity_type="import_batch",
+            entity_id=None,
+            action="import_backup",
+            before_json=None,
+            after_json=json.dumps(
+                {"restored": result["restored"], "skipped": result["skipped"],
+                 "errors": result["errors"]},
+                ensure_ascii=False,
+            ),
+        ))
+        session.commit()
+
+    return result

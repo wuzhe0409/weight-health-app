@@ -112,6 +112,18 @@
     </el-card>
 
     <el-card class="section">
+      <template #header>恢复备份</template>
+      <el-alert type="info" :closable="false" title="选择之前导出的 JSON 备份文件。已存在的日期自动跳过（不覆盖），仅恢复缺失的记录、食物、体重测量。" />
+      <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+        <input ref="backupFileInput" type="file" accept=".json,application/json" style="display:none" @change="onBackupFileSelected" />
+        <el-button @click="selectBackupFile" :loading="backupLoading">选择备份文件</el-button>
+        <span v-if="backupFileName" class="muted">已选择: {{ backupFileName }}</span>
+        <span v-if="backupResult" class="muted">{{ backupResult }}</span>
+        <el-button v-if="backupFile" type="primary" :loading="backupLoading" @click="doRestoreBackup">确认恢复</el-button>
+      </div>
+    </el-card>
+
+    <el-card class="section">
       <template #header>数据安全策略</template>
       <ul class="muted" style="line-height:1.9">
         <li>历史数据来自开发包，导入前已做只读拷贝（seed/，权限 444），原始文件零改动。</li>
@@ -150,6 +162,52 @@ const llm = reactive({
   llm_model: 'deepseek-chat',
 })
 const importMsg = ref('')
+
+// Backup restore state
+const backupFileInput = ref<HTMLInputElement | null>(null)
+const backupFile = ref<File | null>(null)
+const backupFileName = ref('')
+const backupLoading = ref(false)
+const backupResult = ref('')
+
+function selectBackupFile() {
+  backupFile.value = null
+  backupFileName.value = ''
+  backupResult.value = ''
+  backupFileInput.value?.click()
+}
+
+function onBackupFileSelected(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  backupFile.value = file
+  backupFileName.value = file.name
+  backupResult.value = ''
+}
+
+async function doRestoreBackup() {
+  if (!backupFile.value) {
+    ElMessage.warning('请先选择备份文件')
+    return
+  }
+  backupLoading.value = true
+  backupResult.value = ''
+  try {
+    const formData = new FormData()
+    formData.append('file', backupFile.value)
+    const { data } = await api.restoreBackup(formData)
+    backupResult.value = `恢复 ${data.restored} / 跳过 ${data.skipped} / 错误 ${data.errors}`
+    ElMessage.success(backupResult.value)
+    backupFile.value = null
+    backupFileName.value = ''
+  } catch (e: any) {
+    backupResult.value = ''
+    ElMessage.error(`恢复失败: ${e.response?.data?.detail || e.message}`)
+  } finally {
+    backupLoading.value = false
+  }
+}
 const showKey = ref(false)
 const showKey2 = ref(false)
 const testing = ref(false)
