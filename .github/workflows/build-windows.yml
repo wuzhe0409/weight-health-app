@@ -10,88 +10,100 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest   # Microsoft-hosted Win VM
-
+  # Step 1: build the frontend on Ubuntu (npm/node work reliably on Linux).
+  # Step 2: download the prebuilt dist on Windows and only handle Python +
+  #         PyInstaller (no Node work, so no npm/node surprises on Windows).
+  build-frontend:
+    name: Build frontend (Ubuntu)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Build frontend
-        # Use cd instead of working-directory (some runners handle it
-        # differently). Always start from a clean lockfile to avoid
-        # silent install failures from stale npm 9 lockfile.
+        working-directory: frontend
         run: |
-          cd frontend
-          echo "Removing old lockfile + node_modules"
-          rm -rf node_modules package-lock.json
-          echo "Installing fresh"
-          npm install --legacy-peer-deps --no-audit --no-fund --include=dev 2>&1 | tail -30
-          echo "--- vite binary check ---"
-          ls -la node_modules/.bin/vite* 2>&1 || (echo "::error::vite still missing after fresh install" && exit 1)
-          echo "--- building ---"
+          npm ci --no-audit --no-fund
+          ls -la node_modules/.bin/vite
           npm run build
-          echo "--- build artifact ---"
-          ls -la dist/ | head -5
+          ls -la dist/
 
-      - name: Setup Python venv + deps
-        working-directory: backend
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+
+  build-windows:
+    name: Build Windows .exe
+    needs: build-frontend
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download prebuilt frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Setup Python venv + install deps
+        shell: bash
         run: |
+          cd backend
           python -m venv .venv-win
-          .venv-win\Scripts\activate.bat
+          source .venv-win/Scripts/activate
           python -m pip install --upgrade pip
-          pip install -r ..\requirements.txt
-          pip install -r ..\desktop\requirements-win.txt
+          pip install -r ../requirements.txt
+          pip install -r ../desktop/requirements-win.txt
 
-      - name: Copy static assets + launcher
-        working-directory: backend
+      - name: Prepare static + launcher
+        shell: bash
         run: |
-          if exist static rmdir /s /q static
-          xcopy /e /i /y ..\frontend\dist static
-          copy /y ..\desktop\desktop_launcher.py app\desktop_launcher.py
+          cd backend
+          rm -rf static
+          mkdir static
+          cp -r ../frontend/dist/* static/
+          cp ../desktop/desktop_launcher.py app/desktop_launcher.py
+          ls static/
 
       # BUILD_DIST=1 = clean distribution build: NO seed bundled, friend sees empty DB
       - name: PyInstaller (clean distribution)
+        shell: bash
         working-directory: backend
         env:
           BUILD_DIST: '1'
         run: |
-          call .venv-win\Scripts\activate.bat
-          rmdir /s /q dist\WeightHealth 2>nul
-          rmdir /s /q build 2>nul
-          del /q WeightHealth.spec 2>nul
-          pyinstaller ^
-              --name "WeightHealth" ^
-              --noconfirm ^
-              --onedir ^
-              --windowed ^
-              --add-data "static;static" ^
-              --add-data "schema.sql;." ^
-              --hidden-import=sqlmodel ^
-              --hidden-import=fastapi ^
-              --hidden-import=uvicorn ^
-              --hidden-import=uvicorn.loops.auto ^
-              --hidden-import=uvicorn.protocols.http.auto ^
-              --hidden-import=aiofiles ^
-              --hidden-import=pydantic ^
-              --hidden-import=webview ^
-              --hidden-import=webview.platforms.edgechromium ^
-              --hidden-import=webview.platforms.winforms ^
-              --collect-all=app ^
-              app\desktop_launcher.py
+          source .venv-win/Scripts/activate
+          rm -rf dist/WeightHealth build WeightHealth.spec
+          pyinstaller \
+              --name "WeightHealth" \
+              --noconfirm \
+              --onedir \
+              --windowed \
+              --add-data "static;static" \
+              --add-data "schema.sql;." \
+              --hidden-import=sqlmodel \
+              --hidden-import=fastapi \
+              --hidden-import=uvicorn \
+              --hidden-import=uvicorn.loops.auto \
+              --hidden-import=uvicorn.protocols.http.auto \
+              --hidden-import=aiofiles \
+              --hidden-import=pydantic \
+              --hidden-import=webview \
+              --hidden-import=webview.platforms.edgechromium \
+              --hidden-import=webview.platforms.winforms \
+              --collect-all=app \
+              app/desktop_launcher.py
 
       - name: Download Inno Setup
         run: |
