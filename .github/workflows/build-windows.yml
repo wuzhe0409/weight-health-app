@@ -1,145 +1,86 @@
-name: build-windows
+name: Build Windows Desktop App (Friend Edition)
 
 on:
-  workflow_dispatch:        # manual trigger (Run workflow button)
   push:
-    branches: [v2-develop, feature/multi-date-backfill]
-    tags: ['v*']           # auto-trigger on version tag
-
-permissions:
-  contents: write
+    branches: [main, v2-develop]
+  workflow_dispatch:
 
 jobs:
-  # Step 1: build the frontend on Ubuntu (npm/node work reliably on Linux).
-  # Step 2: download the prebuilt dist on Windows and only handle Python +
-  #         PyInstaller (no Node work, so no npm/node surprises on Windows).
   build-frontend:
-    name: Build frontend (Ubuntu)
     runs-on: ubuntu-latest
+    outputs:
+      artifact-name: frontend-dist
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # No cache: was failing on setup-node itself
 
       - name: Build frontend
         working-directory: frontend
         run: |
-          echo "--- node/npm versions ---"
-          node --version
-          npm --version
-          echo "--- removing old lockfile + node_modules for clean install ---"
-          rm -rf node_modules package-lock.json
-          echo "--- npm install (will generate fresh lockfile) ---"
-          npm install --no-audit --no-fund 2>&1 | tail -30
-          echo "--- vite binary check ---"
-          ls -la node_modules/.bin/vite* 2>&1 || (echo "::error::vite still missing" && exit 1)
-          echo "--- building ---"
-          npm run build 2>&1 | tail -30
-          echo "--- artifact ---"
-          ls -la dist/
+          npm install -g yarn --silent
+          yarn install --frozen-lockfile
+          yarn build
 
-      - name: Upload frontend dist
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist/
-          retention-days: 7
 
   build-windows:
-    name: Build Windows .exe
     needs: build-frontend
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download prebuilt frontend
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist/
 
-      - name: Setup Python venv + install deps
-        shell: bash
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: python -m pip install pywebview pyinstaller aiofiles httpx "fastapi[standard]" sqlmodel python-multipart
+        shell: powershell
+
+      - name: Prepare
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path backend\static
+          Copy-Item -Recurse -Force frontend\dist\* backend\static\
+          Copy-Item -Force desktop\desktop_launcher.py backend\app\
+          New-Item -ItemType Directory -Force -Path backend\seed_clean
+          Set-Content -Path backend\seed_clean\README.txt -Value "clean"
+
+      - name: Build exe
+        shell: powershell
         run: |
           cd backend
-          python -m venv .venv-win
-          source .venv-win/Scripts/activate
-          python -m pip install --upgrade pip
-          pip install -r ../requirements.txt
-          pip install -r ../desktop/requirements-win.txt
+          python -m PyInstaller --name WeightHealth-Friend --onedir --windowed `
+            --add-data "static;static" `
+            --add-data "seed_clean;seed" `
+            --add-data "schema.sql;." `
+            --hidden-import sqlmodel `
+            --hidden-import fastapi `
+            --hidden-import uvicorn `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import aiofiles `
+            --hidden-import pydantic `
+            --hidden-import webview `
+            --collect-all app `
+            app\desktop_launcher.py
 
-      - name: Prepare static + launcher
-        shell: bash
-        run: |
-          cd backend
-          rm -rf static
-          mkdir static
-          cp -r ../frontend/dist/* static/
-          cp ../desktop/desktop_launcher.py app/desktop_launcher.py
-          ls static/
+      - name: Package
+        shell: powershell
+        run: Compress-Archive -Path backend\dist\WeightHealth-Friend\* -DestinationPath WeightHealth-Friend-Windows.zip
 
-      # BUILD_DIST=1 = clean distribution build: NO seed bundled, friend sees empty DB
-      - name: PyInstaller (clean distribution)
-        shell: bash
-        working-directory: backend
-        env:
-          BUILD_DIST: '1'
-        run: |
-          source .venv-win/Scripts/activate
-          rm -rf dist/WeightHealth build WeightHealth.spec
-          pyinstaller \
-              --name "WeightHealth" \
-              --noconfirm \
-              --onedir \
-              --windowed \
-              --add-data "static;static" \
-              --add-data "schema.sql;." \
-              --hidden-import=sqlmodel \
-              --hidden-import=fastapi \
-              --hidden-import=uvicorn \
-              --hidden-import=uvicorn.loops.auto \
-              --hidden-import=uvicorn.protocols.http.auto \
-              --hidden-import=aiofiles \
-              --hidden-import=pydantic \
-              --hidden-import=webview \
-              --hidden-import=webview.platforms.edgechromium \
-              --hidden-import=webview.platforms.winforms \
-              --collect-all=app \
-              app/desktop_launcher.py
-
-      - name: Download Inno Setup
-        run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest -Uri 'https://jrsoftware.org/download.php/is.exe' -OutFile is.exe
-          .\is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-          echo "ISCC=$env:ProgramFiles\Inno Setup 6\ISCC.exe" >> $env:GITHUB_ENV
-
-      - name: Package installer
-        run: |
-          & "$env:ProgramFiles\Inno Setup 6\ISCC.exe" desktop\installer.iss
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Copy-Item desktop\installer_output\*.exe artifacts\
-          # Also bundle the one-folder build as a zip for users who don't need the installer
-          Compress-Archive -Path backend\dist\WeightHealth -DestinationPath artifacts\WeightHealth-portable-x64.zip -Force
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: WeightHealth-Windows-x64
-          path: |
-            artifacts\*.exe
-            artifacts\*.zip
-          retention-days: 14
-
-      - name: Attach to release (only on tags)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          draft: true   # safe default; you manually publish the release
+          name: WeightHealth-Friend-Windows
+          path: WeightHealth-Friend-Windows.zip
