@@ -30,9 +30,18 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: |
-          npm ci --no-audit --no-fund
-          ls -la node_modules/.bin/vite
-          npm run build
+          echo "--- node/npm versions ---"
+          node --version
+          npm --version
+          echo "--- removing old lockfile + node_modules for clean install ---"
+          rm -rf node_modules package-lock.json
+          echo "--- npm install (will generate fresh lockfile) ---"
+          npm install --no-audit --no-fund 2>&1 | tail -30
+          echo "--- vite binary check ---"
+          ls -la node_modules/.bin/vite* 2>&1 || (echo "::error::vite still missing" && exit 1)
+          echo "--- building ---"
+          npm run build 2>&1 | tail -30
+          echo "--- artifact ---"
           ls -la dist/
 
       - name: Upload frontend dist
