@@ -28,6 +28,7 @@ cp "$ROOT/desktop/desktop_launcher.py" "$ROOT/backend/app/"
 
 "$PY" -m PyInstaller \
     --name "Weight Health" \
+    --noconfirm \
     --onedir \
     --windowed \
     --add-data "static:static" \

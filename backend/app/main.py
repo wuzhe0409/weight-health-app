@@ -40,10 +40,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Weight Health App", lifespan=lifespan)
 
+# Whitelist local dev frontend + desktop shell only. This app stores private
+# health data on localhost — never allow arbitrary origins to read it.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8011",
+        "http://127.0.0.1:8011",
+        "tauri://localhost",  # desktop wrapper
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

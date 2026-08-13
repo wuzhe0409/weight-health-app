@@ -151,13 +151,15 @@ async function render() {
     ],
   })
 
-  const ws = trend.map((t: any) => t.weight_kg)
-  summary.value = {
-    min: Math.min(...ws).toFixed(2),
-    max: Math.max(...ws).toFixed(2),
-    recentAvg7: (avg7[avg7.length - 1] ?? '—'),
-    preMinusPost: cycle.pre_minus_post_delta ?? '—',
-  }
+  const ws = trend.map((t: any) => t.weight_kg).filter((v: any) => v != null)
+  summary.value = ws.length
+    ? {
+        min: Math.min(...ws).toFixed(2),
+        max: Math.max(...ws).toFixed(2),
+        recentAvg7: (avg7[avg7.length - 1] ?? '—'),
+        preMinusPost: cycle.pre_minus_post_delta ?? '—',
+      }
+    : { min: '—', max: '—', recentAvg7: '—', preMinusPost: '—' }
 }
 
 function onResize() { wChart?.resize(); cChart?.resize() }

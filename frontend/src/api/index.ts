@@ -33,6 +33,11 @@ export const api = {
   exportData: (format = 'json') =>
     http.get(`/export?format=${format}`, { responseType: 'blob' }),
 
+  restoreBackup: (formData: FormData) =>
+    http.post('/import/backup', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+
   profile: () => http.get('/profile'),
 
   updateProfile: (data: any) => http.put('/profile', data),
@@ -52,6 +57,12 @@ export const api = {
 
   // ── Vision Food Recognition (V2) ──
   visionFood: (image: string) => http.post('/ai/vision-food', { image }),
+
+  // ── Batch Fill (V2) ──
+  batchFill: (items: { record_date: string; weight_kg: number | null; bowel_movement: string; period_status?: string | null; period_day?: number | null; period_days_until?: number | null }[]) =>
+    http.post('/records/batch-fill', items),
+
+  batchExists: (dates: string[]) => http.post('/records/exists', dates),
 }
 
 export default api

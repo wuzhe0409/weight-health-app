@@ -41,12 +41,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import api from '@/api'
 import type { DailyRecord } from '@/types'
 
 const router = useRouter()
+const route = useRoute()
 const picked = ref(new Date())
 const records = ref<DailyRecord[]>([])
 const byDate = ref<Record<string, DailyRecord>>({})
@@ -73,4 +74,6 @@ async function doSearch() {
   searched.value = true
 }
 onMounted(load)
+// Re-load whenever user navigates to this route (e.g. after batch-fill on another page)
+watch(() => route.path, () => { if (route.path.includes('history')) load() })
 </script>

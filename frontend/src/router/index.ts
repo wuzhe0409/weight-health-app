@@ -1,19 +1,15 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import TodayRecord from '@/views/TodayRecord.vue'
-import AIChat from '@/views/AIChat.vue'
-import HistoryCalendar from '@/views/HistoryCalendar.vue'
-import Trends from '@/views/Trends.vue'
-import DayDetail from '@/views/DayDetail.vue'
-import Settings from '@/views/Settings.vue'
 
+// Lazy-load every view so the initial bundle stays small; each page (and its
+// deps like echarts) is fetched on first navigation.
 const routes = [
   { path: '/', redirect: '/ai-chat' },
-  { path: '/ai-chat', name: 'ai-chat', component: AIChat },
-  { path: '/today', name: 'today', component: TodayRecord },
-  { path: '/calendar', name: 'calendar', component: HistoryCalendar },
-  { path: '/trends', name: 'trends', component: Trends },
-  { path: '/day/:date', name: 'day', component: DayDetail },
-  { path: '/settings', name: 'settings', component: Settings },
+  { path: '/ai-chat', name: 'ai-chat', component: () => import('@/views/AIChat.vue') },
+  { path: '/today', name: 'today', component: () => import('@/views/TodayRecord.vue') },
+  { path: '/calendar', name: 'calendar', component: () => import('@/views/HistoryCalendar.vue') },
+  { path: '/trends', name: 'trends', component: () => import('@/views/Trends.vue') },
+  { path: '/day/:date', name: 'day', component: () => import('@/views/DayDetail.vue') },
+  { path: '/settings', name: 'settings', component: () => import('@/views/Settings.vue') },
 ]
 
 export default createRouter({
