@@ -59,6 +59,20 @@ class AIProvider(ABC):
         """Free-form nutrition Q&A chat. Returns markdown reply."""
         ...
 
+    @abstractmethod
+    async def vision_food(
+        self,
+        image_base64: str,
+    ) -> Dict[str, Any]:
+        """Analyze a food photo and return structured food items.
+        
+        Expected keys:
+          - foods: list of {name, quantity_guess, kcal_estimate, confidence}
+          - total_kcal_estimate: float
+          - raw_response: str
+        """
+        ...
+
 
 class LocalRuleProvider(AIProvider):
     def parse(self, text: str, base: Optional[date] = None) -> ParsePreview:
@@ -113,6 +127,13 @@ class LocalRuleProvider(AIProvider):
         profile: Dict[str, Any],
     ) -> str:
         return "**未配置 AI 模型**\n\n请在「设置」中配置 API key 后即可进行 AI 对话。"
+
+    async def vision_food(self, image_base64: str) -> Dict[str, Any]:
+        return {
+            "foods": [],
+            "total_kcal_estimate": 0,
+            "raw_response": "未配置图像识别模型。请在设置中配置智谱 GLM-4V 的 API Key。",
+        }
 
 
 CHAT_SYSTEM_PROMPT = """你是一位专业、亲切的减脂营养顾问。用户正在记录每日体重和饮食，可能会向你提问。
@@ -261,7 +282,7 @@ JSON 格式（严格按此结构）：
     {"meal": "lunch", "food": "西红柿鸡蛋", "quantity": "约200g", "kcal_min": 130, "kcal_max": 190, "note": "含油炒制，番茄+2鸡蛋"},
     {"meal": "lunch", "food": "米饭四分之三碗", "quantity": "约150g熟米", "kcal_min": 180, "kcal_max": 210, "note": "米饭参考120-140kcal/100g"},
     {"meal": "dinner", "food": "无糖酸奶", "quantity": "300g", "kcal_min": 180, "kcal_max": 225, "note": "参考表60-75kcal/100g"},
-    {"meal": "drink", "food": "瑞幸抹茶丝绒拿铁", "quantity": "全冰去丝绒减半补水约400ml", "kcal_min": 80, "kcal_max": 120, "note": "抹茶拿铁含奶+糖浆，去丝绒后热量明显降低"}
+    {"meal": "drink", "food": "抹茶", "quantity": "约350ml", "kcal_min": 180, "kcal_max": 240, "note": "抹茶饮品按 50-70kcal/100ml 估算"}
   ],
   "weight_analysis": "今日体重49.0kg与昨日持平，处于近期48.75-49.5kg区间的低位。昨日有排便，今日体重未因排便继续下降，说明体内水分平衡。结合今日约1230-1580kcal的总热量（低于基础代谢），整体处于减脂区间。",
   "weight_prediction": "预测明天晨起体重约48.9-49.1kg。理由：今日摄入低于基础代谢约300-500kcal，理论上每日可减少50g左右脂肪（约0.05kg体重），但午餐米饭+鱼香肉丝糖分可能引起轻微水分滞留。综合下来明天体重小幅下降或持平，波动范围约0.1kg。",
@@ -283,7 +304,14 @@ JSON 格式（严格按此结构）：
 4. **营养合理性自检**：估算完当日总热量后，在 analysis 中做合理检查——比如一顿午餐有烧烤+冷面，只在 300kcal 就不合理；一天只吃水果酸奶，总热量低于 600 也不合理。
 
 ——其他规则——
-- **必须把用户输入中的每一项食物都列在 kcal_breakdown 里**，即使是同一餐也要分开成多行；不能合并为一项。
+- **【严禁幻觉】** 这是最高优先级规则，必须严格遵守：
+  - `meals` 字典中的食物名称必须与用户输入**完全一致**，可以加标准通用名称（如"白米饭"），但**禁止脑补用户没说过的内容**。
+  - 用户输入「抹茶」→ 列表里只写「抹茶」，不要写成「抹茶拿铁」「抹茶丝绒」「抹茶含奶+糖浆」。
+  - 用户输入「咖啡」→ 列表里只写「咖啡」，不要自己推断「拿铁」「美式」「库迪小黄油美式」。
+  - 用户输入「包子」→ 列表里只写「包子」，不要自己加「便利蜂豆腐角素包」。
+  - `note` 字段只能解释「为什么按这个热量估算」（基于参考表/份量/油盐度），**禁止捏造用户没说过的成分/品牌/做法细节**。
+  - 如果用户输入过于简短无法精确估算，可以按通用同类食品估算热量，但 `food` 字段必须保持简短（1-4字），不要堆砌形容词。
+- 必须把用户输入中的每一项食物都列在 kcal_breakdown 里，即使是同一餐也要分开成多行；不能合并为一项。
 - 如果用户没有提供体重/排便/生理期，对应字段返回 null。
 - 食物按早餐/午餐/晚餐/加餐/饮料归类；不要把饮品放到正餐里。
 - 热量估算给出区间（min/max），不要给精确单一值；没有把握时区间放宽。
@@ -532,6 +560,71 @@ class OpenAIProvider(AIProvider):
             return f"模型接口错误（{hint}），请检查配置或稍后重试。"
         except Exception as e:
             return f"调用 AI 时出错：{e}"
+
+    async def vision_food(self, image_base64: str) -> Dict[str, Any]:
+        """Analyze a food photo using vision model (e.g. GLM-4V)."""
+        if self.model.lower() not in self.MULTIMODAL_MODELS:
+            return {
+                "foods": [],
+                "total_kcal_estimate": 0,
+                "raw_response": f"当前模型 {self.model} 不支持图片识别，请使用智谱 GLM-4V 或 GPT-4o。",
+            }
+
+        vision_system = """你是一个食物热量识别助手。用户会发一张食物照片给你分析。
+请识别照片中的所有食物，并给出每项食物的名称、份量估算、热量估算（kcal）。
+
+输出必须是纯 JSON（第一个字符是 {，最后一个字符是 }），格式：
+{
+  "foods": [
+    {"name": "食物名称", "quantity_guess": "约200g", "kcal_estimate": 280, "confidence": "high"}
+  ],
+  "total_kcal_estimate": 520,
+  "note": "整体评价或注意事项"
+}
+
+规则：
+- 识别中餐菜品时用中文名称（如"西红柿炒鸡蛋""宫保鸡丁"）
+- 份量根据图片中与其他物品的大小对比来估算
+- confidence 分 high/medium/low
+- 如果无法识别，返回空 foods 数组并说明原因"""
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": vision_system},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "请分析这张图片中是什么食物，份量大约多少，总热量约多少大卡。"},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+                                ],
+                            },
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 1024,
+                    },
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            raw = data["choices"][0]["message"]["content"] or ""
+            parsed = _extract_json(raw)
+            parsed.setdefault("foods", [])
+            parsed.setdefault("total_kcal_estimate", 0)
+            parsed.setdefault("raw_response", raw)
+            return parsed
+        except httpx.HTTPStatusError as e:
+            hint = self.HTTP_HINTS.get(e.response.status_code, f"HTTP {e.response.status_code}")
+            return {"foods": [], "total_kcal_estimate": 0, "raw_response": f"图像识别接口错误（{hint}）"}
+        except Exception as e:
+            return {"foods": [], "total_kcal_estimate": 0, "raw_response": f"图像识别失败：{e}"}
 
 
 def _error_result(msg: str, raw: str = "") -> Dict[str, Any]:

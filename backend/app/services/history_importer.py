@@ -13,6 +13,7 @@ import csv
 import json
 import os
 import re
+import sys
 from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session, select
@@ -22,7 +23,10 @@ from app.schemas import ImportResult
 
 # history_importer.py lives in backend/app/services -> go up 3 levels to backend/
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SEED_DIR = os.path.join(BACKEND_DIR, "seed")
+SEED_DIR = os.path.join(
+    sys._MEIPASS if getattr(sys, "frozen", False) else BACKEND_DIR,
+    "seed",
+)
 
 DRINK_KEYWORDS = ("咖啡", "美式", "拿铁", "茶", "可乐", "饮", "冰萃",
                   "水溶", "果汁", "牛奶", "奶茶", "啤酒", "酒", "酸奶")

@@ -76,3 +76,62 @@ class RecordResponse(SQLModel):
     is_locked: int = 0
     food_entries: List[Dict[str, Any]] = []
     weight_measurements: List[Dict[str, Any]] = []
+
+
+# ── Food Library ──
+class FoodLibraryCreate(SQLModel):
+    name: str
+    category: str = "other"
+    calories_per_100g: Optional[float] = None
+    protein_per_100g: Optional[float] = None
+    carbs_per_100g: Optional[float] = None
+    fat_per_100g: Optional[float] = None
+    common_portion: Optional[str] = None
+    common_portion_g: Optional[float] = None
+    common_portion_kcal: Optional[float] = None
+
+
+class FoodLibraryResponse(SQLModel):
+    id: int
+    name: str
+    category: str = "other"
+    calories_per_100g: Optional[float] = None
+    protein_per_100g: Optional[float] = None
+    carbs_per_100g: Optional[float] = None
+    fat_per_100g: Optional[float] = None
+    common_portion: Optional[str] = None
+    common_portion_g: Optional[float] = None
+    common_portion_kcal: Optional[float] = None
+    is_custom: int = 0
+
+
+class FoodSearchResult(SQLModel):
+    items: List[FoodLibraryResponse] = []
+    total: int = 0
+
+
+# ── Batch Fill ──
+class BatchFillItem(SQLModel):
+    record_date: str
+    weight_kg: Optional[float] = None
+    bowel_movement: str = "unknown"
+    period_status: Optional[str] = None
+    period_day: Optional[int] = None
+    period_days_until: Optional[int] = None
+
+
+class BatchFillResultItem(SQLModel):
+    record_date: str
+    weight_kg: Optional[float] = None
+    bowel_movement: str = "unknown"
+    period_status: Optional[str] = None
+    period_day: Optional[int] = None
+    period_days_until: Optional[int] = None
+    action: str  # "created" | "updated" | "skipped"
+
+
+class BatchFillResult(SQLModel):
+    items: List[BatchFillResultItem] = []
+    total_created: int = 0
+    total_updated: int = 0
+    total_skipped: int = 0

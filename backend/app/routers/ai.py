@@ -14,6 +14,18 @@ from app.services import ai_provider
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
+# Fields that must NEVER be sent inside an LLM prompt (they would leak to the
+# third-party model provider).
+_SENSITIVE_PROFILE_FIELDS = ("llm_api_key", "vision_api_key")
+
+
+def _sanitize_profile_for_prompt(profile: UserProfile) -> Dict[str, Any]:
+    """Dump profile for prompt context, stripping all secret fields."""
+    d = profile.model_dump()
+    for k in _SENSITIVE_PROFILE_FIELDS:
+        d.pop(k, None)
+    return d
+
 
 def _serialize_recent(records: List[DailyRecord], session: Session) -> List[Dict[str, Any]]:
     out = []
@@ -48,9 +60,7 @@ async def analyze(payload: dict, session: Session = Depends(get_session)):
     from app.db import ensure_user_profile
     ensure_user_profile(session)
     profile = session.get(UserProfile, 1)
-    profile_dict = profile.model_dump()
-    # Never leak raw key to downstream context or logs.
-    profile_dict.pop("llm_api_key", None)
+    profile_dict = _sanitize_profile_for_prompt(profile)
 
     # Recent 7 records excluding target date, newest first.
     recent = session.exec(
@@ -109,8 +119,7 @@ async def chat(payload: dict, session: Session = Depends(get_session)):
     from app.db import ensure_user_profile
     ensure_user_profile(session)
     profile = session.get(UserProfile, 1)
-    profile_dict = profile.model_dump()
-    profile_dict.pop("llm_api_key", None)
+    profile_dict = _sanitize_profile_for_prompt(profile)
 
     recent = session.exec(
         select(DailyRecord)
@@ -136,3 +145,35 @@ async def chat(payload: dict, session: Session = Depends(get_session)):
         raise HTTPException(status_code=502, detail=f"AI 调用失败: {e}")
 
     return {"reply": reply}
+
+
+@router.post("/vision-food")
+async def vision_food(payload: dict, session: Session = Depends(get_session)):
+    """Analyze a food photo using vision AI. Returns recognized food items."""
+    image_base64 = (payload.get("image") or "").strip()
+    if not image_base64:
+        raise HTTPException(status_code=422, detail="image (base64) required")
+
+    from app.db import ensure_user_profile
+    ensure_user_profile(session)
+    profile = session.get(UserProfile, 1)
+
+    # Use vision provider from profile
+    if not profile.vision_api_key:
+        return {
+            "foods": [],
+            "total_kcal_estimate": 0,
+            "raw_response": "未配置图像识别模型。请在设置 → AI模型配置中，填写「图片识别」的 API Key（推荐智谱 GLM-4V-Flash）。",
+        }
+
+    provider = ai_provider.get_provider(
+        "zhipu",
+        api_key=profile.vision_api_key,
+        base_url=profile.vision_base_url or "https://open.bigmodel.cn/api/paas/v4/",
+        model=profile.vision_model or "glm-4v-flash",
+    )
+    try:
+        result = await provider.vision_food(image_base64)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"图像识别失败: {e}")
+    return result

@@ -2,15 +2,26 @@
 from __future__ import annotations
 
 import os
+import sys
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import text
 
-# Paths
-APP_DIR = os.path.dirname(os.path.abspath(__file__))            # backend/app
-BACKEND_DIR = os.path.dirname(APP_DIR)                           # backend
-DATA_DIR = os.path.join(BACKEND_DIR, "data")
+# PyInstaller-aware paths
+if getattr(sys, "frozen", False):
+    # Running as PyInstaller bundle
+    BUNDLE_DIR = sys._MEIPASS
+    DATA_DIR = os.path.join(os.path.expanduser("~"), ".weight-health")
+    SCHEMA_PATH = os.path.join(BUNDLE_DIR, "schema.sql")
+    SEED_DIR = os.path.join(BUNDLE_DIR, "seed")
+else:
+    # Development
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    BACKEND_DIR = os.path.dirname(APP_DIR)
+    DATA_DIR = os.path.join(BACKEND_DIR, "data")
+    SCHEMA_PATH = os.path.join(BACKEND_DIR, "schema.sql")
+    SEED_DIR = os.path.join(BACKEND_DIR, "seed")
+
 DB_PATH = os.path.join(DATA_DIR, "app.db")
-SCHEMA_PATH = os.path.join(BACKEND_DIR, "schema.sql")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -42,6 +53,33 @@ def init_db() -> None:
         conn.executescript(schema_sql)
         conn.commit()
     _migrate_existing_db()
+    _migrate_food_library()
+
+
+def _migrate_food_library() -> None:
+    """Create food_library table if it doesn't exist (for existing DBs)."""
+    with engine.raw_connection() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS food_library ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  name TEXT NOT NULL,"
+            "  category TEXT DEFAULT 'other',"
+            "  calories_per_100g REAL,"
+            "  protein_per_100g REAL,"
+            "  carbs_per_100g REAL,"
+            "  fat_per_100g REAL,"
+            "  common_portion TEXT,"
+            "  common_portion_g REAL,"
+            "  common_portion_kcal REAL,"
+            "  is_custom INTEGER DEFAULT 0,"
+            "  user_id INTEGER,"
+            "  created_at TEXT"
+            ")"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_food_name ON food_library(name)"
+        )
+        conn.commit()
 
 
 def get_session():
