@@ -272,8 +272,8 @@ JSON 格式（严格按此结构）：
       "snack": [],
       "drink": ["瑞幸抹茶丝绒拿铁"]
     },
-    "total_kcal_min": 1230,
-    "total_kcal_max": 1580,
+    "total_kcal_min": 1070,
+    "total_kcal_max": 1425,
     "data_status": "estimated"
   },
   "kcal_breakdown": [
@@ -284,9 +284,9 @@ JSON 格式（严格按此结构）：
     {"meal": "dinner", "food": "无糖酸奶", "quantity": "300g", "kcal_min": 180, "kcal_max": 225, "note": "参考表60-75kcal/100g"},
     {"meal": "drink", "food": "抹茶", "quantity": "约350ml", "kcal_min": 180, "kcal_max": 240, "note": "抹茶饮品按 50-70kcal/100ml 估算"}
   ],
-  "weight_analysis": "今日体重49.0kg与昨日持平，处于近期48.75-49.5kg区间的低位。昨日有排便，今日体重未因排便继续下降，说明体内水分平衡。结合今日约1230-1580kcal的总热量（低于基础代谢），整体处于减脂区间。",
-  "weight_prediction": "预测明天晨起体重约48.9-49.1kg。理由：今日摄入低于基础代谢约300-500kcal，理论上每日可减少50g左右脂肪（约0.05kg体重），但午餐米饭+鱼香肉丝糖分可能引起轻微水分滞留。综合下来明天体重小幅下降或持平，波动范围约0.1kg。",
-  "suggestions": "1. 蛋白质摄入偏少（约30g左右），建议晚餐或加餐增加一个鸡蛋或一小把坚果。2. 午餐油盐偏高（如外出吃饭不可避免），晚上选择清淡食物很合适。3. 明天可继续保持当前热量区间（1200-1500kcal），配合适当运动效果更佳。",
+  "weight_analysis": "今日体重49.0kg与昨日持平，处于近期48.75-49.5kg区间的低位。昨日有排便，今日体重未因排便继续下降，说明体内水分平衡。结合今日约1070-1425kcal的总热量（各餐明细相加得出），整体处于减脂可控区间。",
+  "weight_prediction": "预测明天晨起体重约48.9-49.1kg。理由：今日摄入适中，若保持当前热量水平，体重将平稳或小幅下降，波动范围约0.1kg。",
+  "suggestions": "1. 蛋白质摄入偏少（约30g左右），建议晚餐或加餐增加一个鸡蛋或一小把坚果。2. 午餐油盐偏高（如外出吃饭不可避免），晚上选择清淡食物很合适。3. 明天可继续保持当前热量区间（1000-1400kcal），配合适当运动效果更佳。",
   "score": 8.0
 }
 
@@ -302,6 +302,11 @@ JSON 格式（严格按此结构）：
 3. **note 必须写推算过程**：kcal_breakdown 里每行的 note 字段不能只写"参考表xx"，必须拆解写出"面皮xx + 油xx + 肉xx = 总计 xx"这类依据。让用户能看懂数字怎么来的。
 
 4. **营养合理性自检**：估算完当日总热量后，在 analysis 中做合理检查——比如一顿午餐有烧烤+冷面，只在 300kcal 就不合理；一天只吃水果酸奶，总热量低于 600 也不合理。
+
+5. **total_kcal_min/max 必须等于明细逐项之和（最高优先级，禁止估算总数）**：
+   - `total_kcal_min` = kcal_breakdown 中**所有项的 kcal_min 相加**；
+   - `total_kcal_max` = kcal_breakdown 中**所有项的 kcal_max 相加**。
+   - 必须把每一项的 kcal_min 列出来相加、每一项的 kcal_max 列出来相加，再填入 total。**严禁**直接凭感觉估一个总数，**严禁**把某几项的下限+上限混着加。填完后再核对一次：total 区间必须能由明细逐项加出来。
 
 ——其他规则——
 - **【严禁幻觉】** 这是最高优先级规则，必须严格遵守：
@@ -386,6 +391,36 @@ def _extract_json(text: str) -> Dict[str, Any]:
         "markdown": text[:500],
         "_raw": text[:2000],
     }
+
+
+def _recompute_total(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive total_kcal_* by summing kcal_breakdown.
+
+    LLMs routinely miscalculate multi-item range sums (e.g. treating each
+    item's min+max as a single value, or double-counting). The headline total
+    must ALWAYS equal the sum of its parts, so we never trust the model's own
+    total — we recompute it from the per-item breakdown.
+    """
+    breakdown = parsed.get("kcal_breakdown") or []
+    total_min: Optional[float] = None
+    total_max: Optional[float] = None
+    for item in breakdown:
+        if not isinstance(item, dict):
+            continue
+        mn = item.get("kcal_min")
+        mx = item.get("kcal_max")
+        # bool is a subclass of int — exclude it explicitly.
+        if isinstance(mn, (int, float)) and not isinstance(mn, bool):
+            total_min = (total_min or 0.0) + mn
+        if isinstance(mx, (int, float)) and not isinstance(mx, bool):
+            total_max = (total_max or 0.0) + mx
+
+    structured = parsed.setdefault("structured", {})
+    if total_min is not None:
+        structured["total_kcal_min"] = int(round(total_min))
+    if total_max is not None:
+        structured["total_kcal_max"] = int(round(total_max))
+    return parsed
 
 
 class OpenAIProvider(AIProvider):
@@ -508,6 +543,8 @@ class OpenAIProvider(AIProvider):
         parsed.setdefault("suggestions", "")
         parsed.setdefault("score", None)
         parsed.setdefault("structured", {})
+        # Never trust the model's own total — recompute from the breakdown.
+        parsed = _recompute_total(parsed)
         return parsed
 
     async def chat(
@@ -619,6 +656,16 @@ class OpenAIProvider(AIProvider):
             parsed.setdefault("foods", [])
             parsed.setdefault("total_kcal_estimate", 0)
             parsed.setdefault("raw_response", raw)
+            # Recompute the total from per-food estimates (don't trust the model's sum).
+            foods = parsed["foods"] if isinstance(parsed["foods"], list) else []
+            total = 0
+            for f in foods:
+                if isinstance(f, dict):
+                    ke = f.get("kcal_estimate")
+                    if isinstance(ke, (int, float)) and not isinstance(ke, bool):
+                        total += ke
+            if foods:
+                parsed["total_kcal_estimate"] = int(round(total))
             return parsed
         except httpx.HTTPStatusError as e:
             hint = self.HTTP_HINTS.get(e.response.status_code, f"HTTP {e.response.status_code}")
