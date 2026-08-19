@@ -61,6 +61,7 @@ PYI_ARGS=(
     --hidden-import=webview.platforms.cocoa
     --collect-all=app
     --osx-bundle-identifier=com.wz.weighthealth
+    --icon "$ROOT/desktop/icons/app-icon.icns"
     app/desktop_launcher.py
 )
 
