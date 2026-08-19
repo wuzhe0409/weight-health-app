@@ -55,8 +55,15 @@ class AIProvider(ABC):
         chat_history: List[Dict[str, str]],
         recent_records: List[Dict[str, Any]],
         profile: Dict[str, Any],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_handler: Optional[Any] = None,
     ) -> str:
-        """Free-form nutrition Q&A chat. Returns markdown reply."""
+        """Free-form nutrition Q&A chat. Returns markdown reply.
+
+        `tools` + `tool_handler` enable function calling: the model may emit
+        tool_calls to look up real user data; tool_handler(name, args) executes
+        them and returns a JSON-serializable dict.
+        """
         ...
 
     @abstractmethod
@@ -125,6 +132,8 @@ class LocalRuleProvider(AIProvider):
         chat_history: List[Dict[str, str]],
         recent_records: List[Dict[str, Any]],
         profile: Dict[str, Any],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_handler: Optional[Any] = None,
     ) -> str:
         return "**未配置 AI 模型**\n\n请在「设置」中配置 API key 后即可进行 AI 对话。"
 
@@ -137,11 +146,16 @@ class LocalRuleProvider(AIProvider):
 
 
 CHAT_SYSTEM_PROMPT = """你是一位专业、亲切的减脂营养顾问。用户正在记录每日体重和饮食，可能会向你提问。
-你需要结合用户最近的体重趋势、饮食记录和营养学知识来回答。
+你需要结合用户真实的体重趋势、饮食记录和营养学知识来回答。
+
+你有「工具」可以查询用户的真实数据（今日记录、指定日期记录、最近 N 天体重趋势）。
 
 规则：
+- **查询真实数据（最高优先级）**：当用户询问具体数据（如"今天吃了什么""今天体重""某天的记录""最近瘦了多少""体重趋势"）时，**必须先调用相应工具**获取真实数据，再基于工具返回的数据回答。**严禁凭空编造数据**。
+- 工具返回 `{"found": false}` 表示该日期没有记录，要如实告诉用户"这一天还没有记录"，不要编。
+- 工具返回 `{"error": ...}` 表示调用失败，要友好地说明并给出建议，不要假装成功。
 - 回答要简洁实用，用中文，适当使用 markdown 格式（**加粗**、- 列表）。
-- 如果用户问"会不会变胖""热量超了吗"等问题，请结合最近几天的记录给出具体分析。
+- 如果用户问"会不会变胖""热量超了吗"等问题，请结合工具查到的真实记录给出具体分析。
 - 如果问题与减脂/饮食/体重无关，友好地将话题引导回减脂方向。
 - 语气温暖但专业，可以适当使用 emoji 增加亲和力（但不要过度）。"""
 
@@ -272,8 +286,8 @@ JSON 格式（严格按此结构）：
       "snack": [],
       "drink": ["瑞幸抹茶丝绒拿铁"]
     },
-    "total_kcal_min": 1230,
-    "total_kcal_max": 1580,
+    "total_kcal_min": 1070,
+    "total_kcal_max": 1425,
     "data_status": "estimated"
   },
   "kcal_breakdown": [
@@ -284,9 +298,9 @@ JSON 格式（严格按此结构）：
     {"meal": "dinner", "food": "无糖酸奶", "quantity": "300g", "kcal_min": 180, "kcal_max": 225, "note": "参考表60-75kcal/100g"},
     {"meal": "drink", "food": "抹茶", "quantity": "约350ml", "kcal_min": 180, "kcal_max": 240, "note": "抹茶饮品按 50-70kcal/100ml 估算"}
   ],
-  "weight_analysis": "今日体重49.0kg与昨日持平，处于近期48.75-49.5kg区间的低位。昨日有排便，今日体重未因排便继续下降，说明体内水分平衡。结合今日约1230-1580kcal的总热量（低于基础代谢），整体处于减脂区间。",
-  "weight_prediction": "预测明天晨起体重约48.9-49.1kg。理由：今日摄入低于基础代谢约300-500kcal，理论上每日可减少50g左右脂肪（约0.05kg体重），但午餐米饭+鱼香肉丝糖分可能引起轻微水分滞留。综合下来明天体重小幅下降或持平，波动范围约0.1kg。",
-  "suggestions": "1. 蛋白质摄入偏少（约30g左右），建议晚餐或加餐增加一个鸡蛋或一小把坚果。2. 午餐油盐偏高（如外出吃饭不可避免），晚上选择清淡食物很合适。3. 明天可继续保持当前热量区间（1200-1500kcal），配合适当运动效果更佳。",
+  "weight_analysis": "今日体重49.0kg与昨日持平，处于近期48.75-49.5kg区间的低位。昨日有排便，今日体重未因排便继续下降，说明体内水分平衡。结合今日约1070-1425kcal的总热量（各餐明细相加得出），整体处于减脂可控区间。",
+  "weight_prediction": "预测明天晨起体重约48.9-49.1kg。理由：今日摄入适中，若保持当前热量水平，体重将平稳或小幅下降，波动范围约0.1kg。",
+  "suggestions": "1. 蛋白质摄入偏少（约30g左右），建议晚餐或加餐增加一个鸡蛋或一小把坚果。2. 午餐油盐偏高（如外出吃饭不可避免），晚上选择清淡食物很合适。3. 明天可继续保持当前热量区间（1000-1400kcal），配合适当运动效果更佳。",
   "score": 8.0
 }
 
@@ -302,6 +316,11 @@ JSON 格式（严格按此结构）：
 3. **note 必须写推算过程**：kcal_breakdown 里每行的 note 字段不能只写"参考表xx"，必须拆解写出"面皮xx + 油xx + 肉xx = 总计 xx"这类依据。让用户能看懂数字怎么来的。
 
 4. **营养合理性自检**：估算完当日总热量后，在 analysis 中做合理检查——比如一顿午餐有烧烤+冷面，只在 300kcal 就不合理；一天只吃水果酸奶，总热量低于 600 也不合理。
+
+5. **total_kcal_min/max 必须等于明细逐项之和（最高优先级，禁止估算总数）**：
+   - `total_kcal_min` = kcal_breakdown 中**所有项的 kcal_min 相加**；
+   - `total_kcal_max` = kcal_breakdown 中**所有项的 kcal_max 相加**。
+   - 必须把每一项的 kcal_min 列出来相加、每一项的 kcal_max 列出来相加，再填入 total。**严禁**直接凭感觉估一个总数，**严禁**把某几项的下限+上限混着加。填完后再核对一次：total 区间必须能由明细逐项加出来。
 
 ——其他规则——
 - **【严禁幻觉】** 这是最高优先级规则，必须严格遵守：
@@ -386,6 +405,66 @@ def _extract_json(text: str) -> Dict[str, Any]:
         "markdown": text[:500],
         "_raw": text[:2000],
     }
+
+
+def _recompute_total(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive total_kcal_* by summing kcal_breakdown.
+
+    LLMs routinely miscalculate multi-item range sums (e.g. treating each
+    item's min+max as a single value, or double-counting). The headline total
+    must ALWAYS equal the sum of its parts, so we never trust the model's own
+    total — we recompute it from the per-item breakdown.
+    """
+    breakdown = parsed.get("kcal_breakdown") or []
+    total_min: Optional[float] = None
+    total_max: Optional[float] = None
+    for item in breakdown:
+        if not isinstance(item, dict):
+            continue
+        mn = item.get("kcal_min")
+        mx = item.get("kcal_max")
+        # bool is a subclass of int — exclude it explicitly.
+        if isinstance(mn, (int, float)) and not isinstance(mn, bool):
+            total_min = (total_min or 0.0) + mn
+        if isinstance(mx, (int, float)) and not isinstance(mx, bool):
+            total_max = (total_max or 0.0) + mx
+
+    structured = parsed.setdefault("structured", {})
+    if total_min is not None:
+        structured["total_kcal_min"] = int(round(total_min))
+    if total_max is not None:
+        structured["total_kcal_max"] = int(round(total_max))
+    return parsed
+
+
+def _parse_tool_args(raw: Any) -> Dict[str, Any]:
+    """Leniently parse a tool_call's `arguments` field.
+
+    Providers return it as a JSON string, but it can arrive already-parsed as
+    a dict, empty, or malformed (markdown fences, trailing prose, truncated
+    JSON). Never let a bad arguments blob crash the chat loop — degrade to {}.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not raw or not isinstance(raw, str):
+        return {}
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r"\{[\s\S]*\}", text)
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+    return {}
 
 
 class OpenAIProvider(AIProvider):
@@ -508,6 +587,8 @@ class OpenAIProvider(AIProvider):
         parsed.setdefault("suggestions", "")
         parsed.setdefault("score", None)
         parsed.setdefault("structured", {})
+        # Never trust the model's own total — recompute from the breakdown.
+        parsed = _recompute_total(parsed)
         return parsed
 
     async def chat(
@@ -516,8 +597,16 @@ class OpenAIProvider(AIProvider):
         chat_history: List[Dict[str, str]],
         recent_records: List[Dict[str, Any]],
         profile: Dict[str, Any],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_handler: Optional[Any] = None,
     ) -> str:
-        """Free-form nutrition Q&A. Returns markdown reply."""
+        """Free-form nutrition Q&A with optional tool calling.
+
+        When `tools` + `tool_handler` are provided, the model may emit
+        tool_calls to look up real user data. We execute each call, feed the
+        results back as `tool` messages, and let the model compose the final
+        answer. Bounded to MAX_TOOL_ROUNDS to avoid runaway loops.
+        """
         recent_text = json.dumps(recent_records, ensure_ascii=False)[:3000] if recent_records else "无"
         profile_text = json.dumps(profile, ensure_ascii=False)[:800] if profile else "无"
 
@@ -535,24 +624,56 @@ class OpenAIProvider(AIProvider):
 用户问题：{message}""",
         })
 
+        use_tools = bool(tools) and tool_handler is not None
+        max_rounds = 3 if use_tools else 1
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
+                content = ""
+                for _ in range(max_rounds):
+                    body: Dict[str, Any] = {
                         "model": self.model,
                         "messages": messages,
                         "temperature": 0.7,
                         "max_tokens": min(1500, self.MODEL_MAX_TOKENS.get(self.model.lower(), self.DEFAULT_MAX_TOKENS)),
-                    },
-                )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+                    }
+                    if use_tools:
+                        body["tools"] = tools
+                        body["tool_choice"] = "auto"
+                    resp = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    msg = (data["choices"][0].get("message") or {})
+                    content = msg.get("content") or ""
+                    tool_calls = msg.get("tool_calls") or []
+
+                    if not tool_calls:
+                        return content or "抱歉，我暂时无法回答。"
+
+                    # Model wants tools: keep its message, run each tool,
+                    # then feed results back for the next round.
+                    messages.append(msg)
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        name = fn.get("name") or ""
+                        args = _parse_tool_args(fn.get("arguments"))
+                        try:
+                            result = tool_handler(name, args)
+                        except Exception as e:  # tool crash must never kill chat
+                            result = {"error": f"工具执行失败：{e}"}
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id") or "",
+                            "content": json.dumps(result, ensure_ascii=False, default=str),
+                        })
+                return content or "抱歉，我暂时无法回答。"
         except httpx.TimeoutException:
             return "AI 响应超时，请稍后重试。"
         except httpx.HTTPStatusError as e:
@@ -619,6 +740,16 @@ class OpenAIProvider(AIProvider):
             parsed.setdefault("foods", [])
             parsed.setdefault("total_kcal_estimate", 0)
             parsed.setdefault("raw_response", raw)
+            # Recompute the total from per-food estimates (don't trust the model's sum).
+            foods = parsed["foods"] if isinstance(parsed["foods"], list) else []
+            total = 0
+            for f in foods:
+                if isinstance(f, dict):
+                    ke = f.get("kcal_estimate")
+                    if isinstance(ke, (int, float)) and not isinstance(ke, bool):
+                        total += ke
+            if foods:
+                parsed["total_kcal_estimate"] = int(round(total))
             return parsed
         except httpx.HTTPStatusError as e:
             hint = self.HTTP_HINTS.get(e.response.status_code, f"HTTP {e.response.status_code}")

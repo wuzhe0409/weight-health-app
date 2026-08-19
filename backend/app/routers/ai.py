@@ -1,6 +1,7 @@
 """AI analysis endpoint."""
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,6 +46,123 @@ def _serialize_recent(records: List[DailyRecord], session: Session) -> List[Dict
             ],
         })
     return out
+
+
+# ── Chat function-calling tools ──
+# The model can call these to look up real user data instead of hallucinating.
+
+TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "query_today_record",
+            "description": "查询用户「今天」的健康记录（体重、排便、生理期、各餐食物、总热量、分析）。当用户问『今天的数据』『今天吃了什么』『今天体重多少』『今天热量多少』等需要查看今日记录的问题时，必须调用本工具获取真实数据，禁止凭空编造。",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_record_by_date",
+            "description": "查询用户「指定日期」的健康记录（体重、排便、生理期、各餐食物、总热量、分析）。当用户问『X月X日』『某天吃了什么』『某天体重』等需要查看历史某天记录的问题时，调用本工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "要查询的日期，格式 YYYY-MM-DD"},
+                },
+                "required": ["date"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_weight_trend",
+            "description": "查询用户最近 N 天的体重趋势与总热量，返回每天数据及首尾体重差。当用户问『最近瘦/胖了多少』『体重变化趋势』『最近几天体重』等需要看趋势或统计的问题时，调用本工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "统计最近多少天，默认 7，范围 1-90"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+
+def _query_record_dict(record_date: str, session: Session) -> Dict[str, Any]:
+    """Return a compact, model-friendly view of one day's record."""
+    rec = session.exec(
+        select(DailyRecord).where(DailyRecord.record_date == record_date)
+    ).first()
+    if rec is None:
+        return {"found": False, "date": record_date, "message": "该日期没有记录"}
+    full = record_to_dict(rec, session)
+    return {
+        "found": True,
+        "date": record_date,
+        "weight_kg": full.get("weight_kg"),
+        "bowel_movement": full.get("bowel_movement"),
+        "period_status": full.get("period_status"),
+        "period_day": full.get("period_day"),
+        "total_kcal_min": full.get("total_kcal_min"),
+        "total_kcal_max": full.get("total_kcal_max"),
+        "food_entries": [
+            {
+                "meal_type": f.get("meal_type"),
+                "food_name": f.get("food_name"),
+                "quantity_text": f.get("quantity_text"),
+            }
+            for f in full.get("food_entries", [])
+        ],
+        "analysis": full.get("analysis"),
+    }
+
+
+def _query_weight_trend(days: int, session: Session) -> Dict[str, Any]:
+    days = max(1, min(days, 90))
+    records = session.exec(
+        select(DailyRecord).order_by(DailyRecord.record_date.desc()).limit(days)
+    ).all()
+    records = list(reversed(records))  # chronological
+    items = [
+        {
+            "date": r.record_date,
+            "weight_kg": r.weight_kg,
+            "total_kcal_min": r.total_kcal_min,
+            "total_kcal_max": r.total_kcal_max,
+        }
+        for r in records
+    ]
+    weights = [r.weight_kg for r in records if r.weight_kg is not None]
+    delta = None
+    if len(weights) >= 2:
+        delta = round(weights[-1] - weights[0], 2)
+    return {"days": days, "count": len(records), "items": items, "weight_delta_kg": delta}
+
+
+def _execute_tool(name: str, args: Dict[str, Any], session: Session) -> Dict[str, Any]:
+    """Dispatch a tool call. Returns a JSON-serializable dict (never raises)."""
+    try:
+        if name == "query_today_record":
+            return _query_record_dict(date.today().isoformat(), session)
+        if name == "query_record_by_date":
+            d = (args or {}).get("date")
+            if not d or not isinstance(d, str):
+                return {"error": "缺少日期参数 date（格式 YYYY-MM-DD）"}
+            return _query_record_dict(d, session)
+        if name == "query_weight_trend":
+            raw_days = (args or {}).get("days")
+            try:
+                days = int(raw_days) if raw_days is not None else 7
+            except (TypeError, ValueError):
+                days = 7
+            return _query_weight_trend(days, session)
+        return {"error": f"未知工具：{name}"}
+    except Exception as e:
+        return {"error": f"工具执行失败：{e}"}
 
 
 @router.post("/analyze")
@@ -140,6 +258,8 @@ async def chat(payload: dict, session: Session = Depends(get_session)):
             chat_history=chat_history,
             recent_records=_serialize_recent(recent, session),
             profile=profile_dict,
+            tools=TOOLS,
+            tool_handler=lambda name, args: _execute_tool(name, args, session),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI 调用失败: {e}")
