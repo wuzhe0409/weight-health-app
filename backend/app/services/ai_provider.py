@@ -55,8 +55,15 @@ class AIProvider(ABC):
         chat_history: List[Dict[str, str]],
         recent_records: List[Dict[str, Any]],
         profile: Dict[str, Any],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_handler: Optional[Any] = None,
     ) -> str:
-        """Free-form nutrition Q&A chat. Returns markdown reply."""
+        """Free-form nutrition Q&A chat. Returns markdown reply.
+
+        `tools` + `tool_handler` enable function calling: the model may emit
+        tool_calls to look up real user data; tool_handler(name, args) executes
+        them and returns a JSON-serializable dict.
+        """
         ...
 
     @abstractmethod
@@ -125,6 +132,8 @@ class LocalRuleProvider(AIProvider):
         chat_history: List[Dict[str, str]],
         recent_records: List[Dict[str, Any]],
         profile: Dict[str, Any],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_handler: Optional[Any] = None,
     ) -> str:
         return "**未配置 AI 模型**\n\n请在「设置」中配置 API key 后即可进行 AI 对话。"
 
@@ -137,11 +146,16 @@ class LocalRuleProvider(AIProvider):
 
 
 CHAT_SYSTEM_PROMPT = """你是一位专业、亲切的减脂营养顾问。用户正在记录每日体重和饮食，可能会向你提问。
-你需要结合用户最近的体重趋势、饮食记录和营养学知识来回答。
+你需要结合用户真实的体重趋势、饮食记录和营养学知识来回答。
+
+你有「工具」可以查询用户的真实数据（今日记录、指定日期记录、最近 N 天体重趋势）。
 
 规则：
+- **查询真实数据（最高优先级）**：当用户询问具体数据（如"今天吃了什么""今天体重""某天的记录""最近瘦了多少""体重趋势"）时，**必须先调用相应工具**获取真实数据，再基于工具返回的数据回答。**严禁凭空编造数据**。
+- 工具返回 `{"found": false}` 表示该日期没有记录，要如实告诉用户"这一天还没有记录"，不要编。
+- 工具返回 `{"error": ...}` 表示调用失败，要友好地说明并给出建议，不要假装成功。
 - 回答要简洁实用，用中文，适当使用 markdown 格式（**加粗**、- 列表）。
-- 如果用户问"会不会变胖""热量超了吗"等问题，请结合最近几天的记录给出具体分析。
+- 如果用户问"会不会变胖""热量超了吗"等问题，请结合工具查到的真实记录给出具体分析。
 - 如果问题与减脂/饮食/体重无关，友好地将话题引导回减脂方向。
 - 语气温暖但专业，可以适当使用 emoji 增加亲和力（但不要过度）。"""
 
@@ -423,6 +437,36 @@ def _recompute_total(parsed: Dict[str, Any]) -> Dict[str, Any]:
     return parsed
 
 
+def _parse_tool_args(raw: Any) -> Dict[str, Any]:
+    """Leniently parse a tool_call's `arguments` field.
+
+    Providers return it as a JSON string, but it can arrive already-parsed as
+    a dict, empty, or malformed (markdown fences, trailing prose, truncated
+    JSON). Never let a bad arguments blob crash the chat loop — degrade to {}.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not raw or not isinstance(raw, str):
+        return {}
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r"\{[\s\S]*\}", text)
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
 class OpenAIProvider(AIProvider):
     """OpenAI-compatible chat completions (DeepSeek, Zhipu, Tencent Hunyuan, etc.)."""
 
@@ -553,8 +597,16 @@ class OpenAIProvider(AIProvider):
         chat_history: List[Dict[str, str]],
         recent_records: List[Dict[str, Any]],
         profile: Dict[str, Any],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_handler: Optional[Any] = None,
     ) -> str:
-        """Free-form nutrition Q&A. Returns markdown reply."""
+        """Free-form nutrition Q&A with optional tool calling.
+
+        When `tools` + `tool_handler` are provided, the model may emit
+        tool_calls to look up real user data. We execute each call, feed the
+        results back as `tool` messages, and let the model compose the final
+        answer. Bounded to MAX_TOOL_ROUNDS to avoid runaway loops.
+        """
         recent_text = json.dumps(recent_records, ensure_ascii=False)[:3000] if recent_records else "无"
         profile_text = json.dumps(profile, ensure_ascii=False)[:800] if profile else "无"
 
@@ -572,24 +624,56 @@ class OpenAIProvider(AIProvider):
 用户问题：{message}""",
         })
 
+        use_tools = bool(tools) and tool_handler is not None
+        max_rounds = 3 if use_tools else 1
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
+                content = ""
+                for _ in range(max_rounds):
+                    body: Dict[str, Any] = {
                         "model": self.model,
                         "messages": messages,
                         "temperature": 0.7,
                         "max_tokens": min(1500, self.MODEL_MAX_TOKENS.get(self.model.lower(), self.DEFAULT_MAX_TOKENS)),
-                    },
-                )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+                    }
+                    if use_tools:
+                        body["tools"] = tools
+                        body["tool_choice"] = "auto"
+                    resp = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    msg = (data["choices"][0].get("message") or {})
+                    content = msg.get("content") or ""
+                    tool_calls = msg.get("tool_calls") or []
+
+                    if not tool_calls:
+                        return content or "抱歉，我暂时无法回答。"
+
+                    # Model wants tools: keep its message, run each tool,
+                    # then feed results back for the next round.
+                    messages.append(msg)
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        name = fn.get("name") or ""
+                        args = _parse_tool_args(fn.get("arguments"))
+                        try:
+                            result = tool_handler(name, args)
+                        except Exception as e:  # tool crash must never kill chat
+                            result = {"error": f"工具执行失败：{e}"}
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id") or "",
+                            "content": json.dumps(result, ensure_ascii=False, default=str),
+                        })
+                return content or "抱歉，我暂时无法回答。"
         except httpx.TimeoutException:
             return "AI 响应超时，请稍后重试。"
         except httpx.HTTPStatusError as e:
