@@ -80,7 +80,9 @@ function periodBands(trend: any[]): any[] {
     if (start) bands.push([{ xAxis: start, itemStyle: { color } }, { xAxis: end }])
   }
   trend.forEach((p, i) => {
-    const isP = !!p.period_status && p.period_status.includes('period')
+    // 'period_ended' / 'post_period' mean the period is OVER — not active band.
+    const s = p.period_status || ''
+    const isP = !!s && s.includes('period') && !s.includes('ended') && !s.startsWith('post')
     if (isP) {
       color = p.period_status!.includes('pre') ? 'rgba(230,162,60,0.12)'
         : p.period_status!.startsWith('period_day') ? 'rgba(245,108,108,0.12)'

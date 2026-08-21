@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS user_profile (
   llm_base_url TEXT,
   llm_api_key TEXT,
   llm_model TEXT,
+  vision_api_key TEXT,
+  vision_base_url TEXT,
+  vision_model TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -78,6 +81,23 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS food_library (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category TEXT DEFAULT 'other',
+  calories_per_100g REAL,
+  protein_per_100g REAL,
+  carbs_per_100g REAL,
+  fat_per_100g REAL,
+  common_portion TEXT,
+  common_portion_g REAL,
+  common_portion_kcal REAL,
+  is_custom INTEGER DEFAULT 0,
+  user_id INTEGER,
+  created_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_daily_records_date ON daily_records(record_date);
 CREATE INDEX IF NOT EXISTS idx_food_entries_daily_record ON food_entries(daily_record_id);
 CREATE INDEX IF NOT EXISTS idx_weight_measurements_time ON weight_measurements(measured_at);
+CREATE INDEX IF NOT EXISTS idx_food_name ON food_library(name);

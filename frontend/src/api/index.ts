@@ -1,6 +1,8 @@
 import axios from 'axios'
 
-const http = axios.create({ baseURL: '/api' })
+// Default 30s guard; AI calls get their own longer budget (backend allows 90s).
+const http = axios.create({ baseURL: '/api', timeout: 30_000 })
+const AI_TIMEOUT = 150_000
 
 export const api = {
   parse: (text: string, record_date?: string) =>
@@ -42,9 +44,9 @@ export const api = {
 
   updateProfile: (data: any) => http.put('/profile', data),
 
-  aiAnalyze: (data: any) => http.post('/ai/analyze', data),
+  aiAnalyze: (data: any) => http.post('/ai/analyze', data, { timeout: AI_TIMEOUT }),
 
-  aiChat: (message: string, history?: any[]) => http.post('/ai/chat', { message, history }),
+  aiChat: (message: string, history?: any[]) => http.post('/ai/chat', { message, history }, { timeout: AI_TIMEOUT }),
 
   // ── Food Library (V2) ──
   searchFoods: (q: string, category?: string, limit?: number) =>
@@ -56,7 +58,7 @@ export const api = {
   foodCategories: () => http.get('/foods/categories'),
 
   // ── Vision Food Recognition (V2) ──
-  visionFood: (image: string) => http.post('/ai/vision-food', { image }),
+  visionFood: (image: string) => http.post('/ai/vision-food', { image }, { timeout: AI_TIMEOUT }),
 
   // ── Batch Fill (V2) ──
   batchFill: (items: { record_date: string; weight_kg: number | null; bowel_movement: string; period_status?: string | null; period_day?: number | null; period_days_until?: number | null }[]) =>

@@ -56,7 +56,8 @@ const results = ref<any[]>([])
 const searched = ref(false)
 
 function isPeriod(s: string | null) {
-  return !!s && (s.includes('period') || s === 'period')
+  // 'period_ended' / 'post_period' mean the period is over — don't mark 经.
+  return !!s && s.includes('period') && !s.includes('ended') && !s.startsWith('post')
 }
 function goDay(date: string) {
   router.push(`/day/${date}`)

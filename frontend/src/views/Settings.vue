@@ -289,8 +289,15 @@ async function testLlm() {
   testing.value = true
   try {
     const payload: any = { ...llm, text: '你好，请回复"连接成功"。', record_date: new Date().toISOString().slice(0, 10) }
-    await api.aiAnalyze(payload)
-    ElMessage.success('连接成功')
+    const { data } = await api.aiAnalyze(payload)
+    // Backend returns HTTP 200 with an error payload when the LLM call fails
+    // (key invalid, quota exhausted, etc.) — empty `structured` means failure.
+    const ok = data?.structured && Object.keys(data.structured).length > 0
+    if (ok) {
+      ElMessage.success('连接成功')
+    } else {
+      ElMessage.error(`连接失败：${data?.markdown || '模型未返回有效内容'}`)
+    }
   } catch (e: any) {
     const msg = e.response?.data?.detail || e.message
     ElMessage.error(`连接失败：${msg}`)
