@@ -49,7 +49,6 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:8011",
         "http://127.0.0.1:8011",
-        "tauri://localhost",  # desktop wrapper
     ],
     allow_credentials=False,
     allow_methods=["*"],

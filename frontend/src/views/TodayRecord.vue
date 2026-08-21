@@ -158,7 +158,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api'
 import type { DailyRecord, ParsePreview } from '@/types'
 
@@ -265,6 +265,16 @@ function removeFood(k: number) { foodList.value = foodList.value.filter(f => f._
 
 async function onParse() {
   if (!nlText.value.trim()) { ElMessage.warning('请先输入文本'); return }
+  // Guard: parsing REPLACES the food list — confirm before wiping manual edits.
+  if (foodList.value.length > 0) {
+    try {
+      await ElMessageBox.confirm(
+        '解析会替换当前已填写的饮食明细，确定继续吗？',
+        '替换确认',
+        { confirmButtonText: '替换', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch { return }
+  }
   const { data } = await api.parse(nlText.value, form.record_date)
   preview.value = data
   if (data.weight_kg != null) form.weight_kg = data.weight_kg
@@ -308,6 +318,8 @@ async function loadDate() {
 }
 
 async function save() {
+  // Drop food rows the user left blank — never persist empty food_name rows.
+  const validFoods = foodList.value.filter(f => f.food_name.trim())
   const payload = {
     record_date: form.record_date,
     weight_kg: form.weight_kg,
@@ -322,7 +334,7 @@ async function save() {
     notes: form.notes,
     data_status: form.data_status,
     raw_input: nlText.value || null,
-    food_entries: foodList.value.map(f => ({
+    food_entries: validFoods.map(f => ({
       meal_type: f.meal_type, food_name: f.food_name, quantity_text: f.quantity_text,
       kcal: f.kcal, kcal_source: f.kcal_source,
     })),

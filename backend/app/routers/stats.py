@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -36,13 +37,17 @@ def weight_trend(start: Optional[str] = None, end: Optional[str] = None,
     stmt = stmt.order_by(DailyRecord.record_date)
     records = session.exec(stmt).all()
 
-    window: list[float] = []
+    # 7-day rolling average over a DATE window (today-6 .. today), not a
+    # record-count window: gaps in recording must not pull stale weights
+    # from weeks ago into "recent 7-day" stats.
+    window: list[tuple[date, float]] = []
     out = []
     for r in records:
-        window.append(r.weight_kg)
-        if len(window) > 7:
-            window.pop(0)
-        avg7 = round(sum(window) / len(window), 2) if window else None
+        current = date.fromisoformat(r.record_date)
+        window.append((current, r.weight_kg))
+        cutoff = current - timedelta(days=6)
+        window = [(d, w) for d, w in window if d >= cutoff]
+        avg7 = round(sum(w for _, w in window) / len(window), 2) if window else None
         out.append({
             "record_date": r.record_date,
             "weight_kg": r.weight_kg,

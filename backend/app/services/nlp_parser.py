@@ -77,6 +77,11 @@ def _segment_meals(text: str) -> Dict[str, List[str]]:
     # canonical meal types matching the frontend editable list
     meals: Dict[str, List[str]] = {"breakfast": [], "lunch": [], "dinner": [], "snack": [], "drink": []}
     marker_re = re.compile(r"(早餐|早饭|早晨|上午|午餐|午饭|中午|晚餐|晚饭|晚上|加餐|零食|夜宵|饮料|喝的|下午)")
+    # Time-of-day words (上午/中午/晚上/下午) double as meal markers ONLY when
+    # the following segment is about eating/drinking — otherwise they are
+    # time adverbs ("我晚上称的体重49.5" must NOT become a dinner entry).
+    TIME_ADVERBS = ("上午", "中午", "晚上", "下午")
+    EATING_VERBS = re.compile(r"吃|喝|没|未|不|只|买|点|叫|剩")
     matches = list(marker_re.finditer(text))
     if not matches:
         # No meal marker at all: keep the whole text as a single snack/drink note.
@@ -91,6 +96,8 @@ def _segment_meals(text: str) -> Dict[str, List[str]]:
         if not segment:
             continue
         label = m.group(1)
+        if label in TIME_ADVERBS and not EATING_VERBS.search(segment):
+            continue  # time adverb, not a meal marker — skip this segment
         if label in ("早餐", "早饭", "早晨", "上午"):
             meals["breakfast"].append(segment)
         elif label in ("午餐", "午饭", "中午"):
