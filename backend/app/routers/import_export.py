@@ -138,47 +138,64 @@ async def import_backup_endpoint(
             result["details"].append({"record_date": date, "status": "would_restore"})
             continue
 
+        # SAVEPOINT per record: a failure mid-record must roll back THAT
+        # record only — never commit a half-written record (record without
+        # its food entries) as part of the batch.
         try:
-            new_rec = DailyRecord(
-                record_date=date,
-                weight_kg=rec.get("weight_kg"),
-                bowel_movement=rec.get("bowel_movement", "unknown"),
-                period_status=rec.get("period_status"),
-                period_day=rec.get("period_day"),
-                period_days_until=rec.get("period_days_until"),
-                total_kcal_min=rec.get("total_kcal_min"),
-                total_kcal_max=rec.get("total_kcal_max"),
-                total_kcal_confirmed=rec.get("total_kcal_confirmed"),
-                protein_g=rec.get("protein_g"),
-                steps=rec.get("steps"),
-                water_ml=rec.get("water_ml"),
-                analysis=rec.get("analysis"),
-                notes=rec.get("notes"),
-                data_status=rec.get("data_status", "estimated"),
-                raw_input=rec.get("raw_input"),
-                source=rec.get("source") or "backup_restore",
-                is_locked=rec.get("is_locked", 0),
-            )
-            session.add(new_rec)
-            session.flush()
+            with session.begin_nested():
+                new_rec = DailyRecord(
+                    record_date=date,
+                    weight_kg=rec.get("weight_kg"),
+                    bowel_movement=rec.get("bowel_movement", "unknown"),
+                    period_status=rec.get("period_status"),
+                    period_day=rec.get("period_day"),
+                    period_days_until=rec.get("period_days_until"),
+                    total_kcal_min=rec.get("total_kcal_min"),
+                    total_kcal_max=rec.get("total_kcal_max"),
+                    total_kcal_confirmed=rec.get("total_kcal_confirmed"),
+                    protein_g=rec.get("protein_g"),
+                    steps=rec.get("steps"),
+                    water_ml=rec.get("water_ml"),
+                    analysis=rec.get("analysis"),
+                    notes=rec.get("notes"),
+                    data_status=rec.get("data_status", "estimated"),
+                    raw_input=rec.get("raw_input"),
+                    source=rec.get("source") or "backup_restore",
+                    is_locked=rec.get("is_locked", 0),
+                )
+                session.add(new_rec)
+                session.flush()
 
-            for idx, f in enumerate(rec.get("food_entries", []) or []):
-                session.add(FoodEntry(
-                    daily_record_id=new_rec.id,
-                    meal_type=f.get("meal_type", "snack"),
-                    food_name=f.get("food_name", ""),
-                    quantity_text=f.get("quantity_text", ""),
-                    kcal_source=f.get("kcal_source", "estimated"),
-                    sort_order=idx,
-                ))
+                for idx, f in enumerate(rec.get("food_entries", []) or []):
+                    if not isinstance(f, dict):
+                        raise ValueError(f"food_entries[{idx}] must be an object")
+                    session.add(FoodEntry(
+                        daily_record_id=new_rec.id,
+                        meal_type=f.get("meal_type", "snack"),
+                        food_name=f.get("food_name", ""),
+                        quantity_text=f.get("quantity_text", ""),
+                        quantity_g=f.get("quantity_g"),
+                        kcal=f.get("kcal"),
+                        kcal_min=f.get("kcal_min"),
+                        kcal_max=f.get("kcal_max"),
+                        kcal_source=f.get("kcal_source", "estimated"),
+                        source_note=f.get("source_note"),
+                        sort_order=idx,
+                    ))
 
-            for w in rec.get("weight_measurements", []) or []:
-                session.add(WeightMeasurement(
-                    measured_at=w.get("measured_at") or f"{date}T07:00:00",
-                    weight_kg=w.get("weight_kg", 0),
-                    condition=w.get("condition", "morning_fasted_after_urination"),
-                    daily_record_id=new_rec.id,
-                ))
+                for w in rec.get("weight_measurements", []) or []:
+                    if not isinstance(w, dict):
+                        raise ValueError("weight_measurements items must be objects")
+                    wkg = w.get("weight_kg")
+                    # Never fabricate a 0kg measurement — skip incomplete entries.
+                    if not isinstance(wkg, (int, float)) or isinstance(wkg, bool) or wkg <= 0:
+                        continue
+                    session.add(WeightMeasurement(
+                        measured_at=w.get("measured_at") or f"{date}T07:00:00",
+                        weight_kg=wkg,
+                        condition=w.get("condition", "morning_fasted_after_urination"),
+                        daily_record_id=new_rec.id,
+                    ))
 
             result["restored"] += 1
             result["details"].append({"record_date": date, "status": "restored"})

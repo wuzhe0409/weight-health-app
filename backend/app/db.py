@@ -30,16 +30,59 @@ SQLITE_URL = f"sqlite:///{DB_PATH}"
 engine = create_engine(SQLITE_URL, echo=False, connect_args={"check_same_thread": False})
 
 
-def _migrate_existing_db() -> None:
-    """Add LLM columns to existing user_profile table (schema.sql only affects new DBs)."""
+def _migrate_v1_llm_columns(cursor) -> None:
+    """v1: add LLM config columns to user_profile (schema.sql only affects new DBs)."""
+    cursor.execute("PRAGMA table_info(user_profile)")
+    cols = {row[1] for row in cursor.fetchall()}
+    for col in ("llm_provider", "llm_base_url", "llm_api_key", "llm_model",
+                "vision_api_key", "vision_base_url", "vision_model"):
+        if col not in cols:
+            cursor.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT")
+
+
+def _migrate_v2_food_library(cursor) -> None:
+    """v2: create food_library table (for DBs created before it existed)."""
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS food_library ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  name TEXT NOT NULL,"
+        "  category TEXT DEFAULT 'other',"
+        "  calories_per_100g REAL,"
+        "  protein_per_100g REAL,"
+        "  carbs_per_100g REAL,"
+        "  fat_per_100g REAL,"
+        "  common_portion TEXT,"
+        "  common_portion_g REAL,"
+        "  common_portion_kcal REAL,"
+        "  is_custom INTEGER DEFAULT 0,"
+        "  user_id INTEGER,"
+        "  created_at TEXT"
+        ")"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_food_name ON food_library(name)"
+    )
+
+
+# Ordered migrations: (version, function). Each MUST be idempotent — DBs
+# created before versioning have user_version=0 and will replay all steps.
+MIGRATIONS = (
+    (1, _migrate_v1_llm_columns),
+    (2, _migrate_v2_food_library),
+)
+SCHEMA_VERSION = MIGRATIONS[-1][0]
+
+
+def _run_migrations() -> None:
+    """Apply pending migrations in order, tracked via PRAGMA user_version."""
     with engine.raw_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(user_profile)")
-        cols = {row[1] for row in cursor.fetchall()}
-        for col in ("llm_provider", "llm_base_url", "llm_api_key", "llm_model",
-                  "vision_api_key", "vision_base_url", "vision_model"):
-            if col not in cols:
-                cursor.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT")
+        cursor.execute("PRAGMA user_version")
+        current = cursor.fetchone()[0]
+        for version, migrate in MIGRATIONS:
+            if version > current:
+                migrate(cursor)
+                cursor.execute(f"PRAGMA user_version = {version}")
         conn.commit()
 
 
@@ -52,34 +95,7 @@ def init_db() -> None:
     with engine.raw_connection() as conn:
         conn.executescript(schema_sql)
         conn.commit()
-    _migrate_existing_db()
-    _migrate_food_library()
-
-
-def _migrate_food_library() -> None:
-    """Create food_library table if it doesn't exist (for existing DBs)."""
-    with engine.raw_connection() as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS food_library ("
-            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "  name TEXT NOT NULL,"
-            "  category TEXT DEFAULT 'other',"
-            "  calories_per_100g REAL,"
-            "  protein_per_100g REAL,"
-            "  carbs_per_100g REAL,"
-            "  fat_per_100g REAL,"
-            "  common_portion TEXT,"
-            "  common_portion_g REAL,"
-            "  common_portion_kcal REAL,"
-            "  is_custom INTEGER DEFAULT 0,"
-            "  user_id INTEGER,"
-            "  created_at TEXT"
-            ")"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_food_name ON food_library(name)"
-        )
-        conn.commit()
+    _run_migrations()
 
 
 def get_session():

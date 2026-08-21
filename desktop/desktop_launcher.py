@@ -7,13 +7,41 @@ Run: python -m app.desktop_launcher
 """
 from __future__ import annotations
 
+import json
 import os
+import socket
 import sys
 import threading
 import time
+import urllib.request
 
 import uvicorn
 import webview
+
+APP_ID = "weight-health-app"
+
+
+def _find_free_port() -> int:
+    """Ask the OS for a free localhost port (avoids hardcoded-port collisions)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_our_server(url: str, timeout_s: float = 15.0) -> bool:
+    """Poll /api/health until OUR FastAPI app answers (not just any service
+    that happens to be listening on the port)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=1.0) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                if body.get("app") == APP_ID:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return False
 
 
 def main():
@@ -25,27 +53,25 @@ def main():
 
     os.makedirs(os.path.join(base, "data"), exist_ok=True)
 
+    port = _find_free_port()
+
     # Start FastAPI in a daemon thread
     def run_server():
         uvicorn.run(
             "app.main:app",
             host="127.0.0.1",
-            port=8011,
+            port=port,
             log_level="warning",
         )
 
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
 
-    # Wait for server to be ready
-    url = "http://127.0.0.1:8011"
-    for _ in range(30):
-        try:
-            import urllib.request
-            urllib.request.urlopen(url, timeout=0.5)
-            break
-        except Exception:
-            time.sleep(0.2)
+    url = f"http://127.0.0.1:{port}"
+    if not _wait_for_our_server(url):
+        # Last-resort fallback: open the window anyway so the user sees an
+        # error page instead of a silent hang; the webview reload can recover.
+        print(f"[launcher] warning: backend did not identify itself within timeout, opening {url} anyway", file=sys.stderr)
 
     # Open native window
     webview.create_window(

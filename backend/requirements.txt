@@ -6,3 +6,4 @@ httpx
 aiofiles
 pywebview
 pyinstaller
+pytest  # test runner (backend/tests)

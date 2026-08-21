@@ -63,6 +63,16 @@ app.include_router(profile.router)
 app.include_router(ai.router)
 app.include_router(foods.router)
 
+
+@app.get("/api/health")
+def health():
+    """Identity endpoint for the desktop launcher's readiness probe.
+
+    The launcher must verify it reached OUR FastAPI app (not some other
+    service squatting on a port) before opening the window.
+    """
+    return {"status": "ok", "app": "weight-health-app"}
+
 # Mount static frontend (desktop/distribution mode)
 static_dir = _get_static_dir()
 if static_dir:
