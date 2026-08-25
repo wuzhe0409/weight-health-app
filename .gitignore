@@ -32,3 +32,4 @@ backend/app/desktop_launcher.py
 # Local env
 .env
 .ssh/
+backups/
