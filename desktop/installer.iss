@@ -7,7 +7,7 @@
 ; empty app.db on first launch.
 
 #define MyAppName "Weight Health"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "wuzhe0409"
 #define MyAppURL "https://github.com/wuzhe0409/weight-health-app"
 #define MyAppExeName "WeightHealth.exe"
@@ -24,7 +24,7 @@ DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
 OutputDir=installer_output
 OutputBaseFilename=WeightHealth-Setup-{#MyAppVersion}
-SetupIconFile=icons\app.ico
+SetupIconFile=icons\app-icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

@@ -42,11 +42,14 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
       - name: Install Python deps
-        run: python -m pip install pywebview pyinstaller aiofiles httpx "fastapi[standard]" sqlmodel python-multipart
         shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend\requirements.txt
+          pip install -r desktop\requirements-win.txt
 
       - name: Prepare
         shell: powershell
@@ -65,15 +68,13 @@ jobs:
       - name: Build exe
         shell: powershell
         env:
-          # BUILD_DIST=1 = clean distribution: do NOT --add-data seed/, friends get empty DB
-          # Default 0 (unset) keeps seed for developer self-builds via --add-data
+          # BUILD_DIST=1 = clean distribution: do NOT --add-data seed/, buyers get empty DB
           BUILD_DIST: '1'
         run: |
           cd backend
-          # Build PyInstaller args conditionally based on BUILD_DIST
           if ($env:BUILD_DIST -eq '1') {
             Write-Host "[BUILD_DIST=1] Clean distribution - skipping seed/ to avoid leaking developer data"
-            pyinstaller --name WeightHealth-Friend --onedir --windowed `
+            pyinstaller --name WeightHealth --onedir --windowed `
               --add-data "static;static" `
               --add-data "schema.sql;." `
               --hidden-import sqlmodel `
@@ -84,11 +85,13 @@ jobs:
               --hidden-import aiofiles `
               --hidden-import pydantic `
               --hidden-import webview `
+              --hidden-import webview.platforms.edgechromium `
+              --hidden-import webview.platforms.winforms `
               --collect-all app `
               app\desktop_launcher.py
           } else {
             Write-Host "[BUILD_DIST unset] Developer build - including seed/"
-            pyinstaller --name WeightHealth-Friend --onedir --windowed `
+            pyinstaller --name WeightHealth --onedir --windowed `
               --add-data "static;static" `
               --add-data "seed_clean;seed" `
               --add-data "schema.sql;." `
@@ -100,15 +103,30 @@ jobs:
               --hidden-import aiofiles `
               --hidden-import pydantic `
               --hidden-import webview `
+              --hidden-import webview.platforms.edgechromium `
+              --hidden-import webview.platforms.winforms `
               --collect-all app `
               app\desktop_launcher.py
           }
 
-      - name: Package
+      - name: Build installer (Inno Setup)
         shell: powershell
-        run: Compress-Archive -Path backend\dist\WeightHealth-Friend\* -DestinationPath WeightHealth-Friend-Windows.zip
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe" }
+          & $iscc desktop\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+      - name: Package portable zip
+        shell: powershell
+        run: Compress-Archive -Path backend\dist\WeightHealth\* -DestinationPath WeightHealth-Windows-portable.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WeightHealth-Friend-Windows
-          path: WeightHealth-Friend-Windows.zip
+          name: WeightHealth-Windows-Installer
+          path: desktop\installer_output\WeightHealth-Setup-*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WeightHealth-Windows-Portable
+          path: WeightHealth-Windows-portable.zip
