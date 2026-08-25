@@ -21,6 +21,44 @@ import webview
 APP_ID = "weight-health-app"
 
 
+class JsApi:
+    """Native bridge exposed to the frontend as window.pywebview.api.
+
+    The webview shell has no browser download manager, so blob-anchor
+    downloads silently do nothing — file exports must go through a native
+    save dialog instead.
+    """
+
+    def __init__(self, base_url: str):
+        self._base_url = base_url
+
+    def export_data(self, fmt: str = "json") -> dict:
+        """Fetch /api/export and write it via a native save dialog."""
+        fmt = fmt if fmt in ("json", "csv") else "json"
+        try:
+            with urllib.request.urlopen(
+                f"{self._base_url}/api/export?format={fmt}", timeout=30
+            ) as resp:
+                data = resp.read()
+        except Exception as e:
+            return {"ok": False, "error": f"导出请求失败：{e}"}
+
+        window = webview.windows[0]
+        result = window.create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=f"weight_records.{fmt}",
+        )
+        if not result:
+            return {"ok": False, "cancelled": True}
+        path = result if isinstance(result, str) else result[0]
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+        except Exception as e:
+            return {"ok": False, "error": f"写入文件失败：{e}"}
+        return {"ok": True, "path": path}
+
+
 def _find_free_port() -> int:
     """Ask the OS for a free localhost port (avoids hardcoded-port collisions)."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -81,6 +119,7 @@ def main():
         height=800,
         min_size=(900, 600),
         text_select=True,
+        js_api=JsApi(url),
     )
     webview.start()
 

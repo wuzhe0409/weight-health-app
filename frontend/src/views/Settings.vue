@@ -310,7 +310,26 @@ async function doImport(dry: boolean) {
   importMsg.value = `插入 ${data.inserted} / 跳过 ${data.skipped} / 错误 ${data.errors}` + (dry ? '（试运行）' : '')
   ElMessage.success('导入完成')
 }
-function doExport(format: string) {
+async function doExport(format: string) {
+  // Desktop shell (pywebview) has no browser download manager — blob clicks
+  // are silently swallowed. Use the native save dialog bridge instead.
+  const nativeApi = (window as any).pywebview?.api
+  if (nativeApi) {
+    try {
+      const result = await nativeApi.export_data(format)
+      if (result?.ok) {
+        ElMessage.success(`已导出到 ${result.path}`)
+      } else if (result?.cancelled) {
+        ElMessage.info('已取消导出')
+      } else {
+        ElMessage.error(result?.error || '导出失败')
+      }
+    } catch (e: any) {
+      ElMessage.error(`导出失败: ${e?.message || e}`)
+    }
+    return
+  }
+  // Browser/dev mode: blob download.
   api.exportData(format).then((r) => {
     const blob = new Blob([r.data])
     const url = URL.createObjectURL(blob)
