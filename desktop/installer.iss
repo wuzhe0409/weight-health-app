@@ -36,7 +36,9 @@ MinVersion=10.0
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; NOTE: ChineseSimplified.isl is NOT bundled with Inno Setup 6 — it is a
+; third-party translation that must be vendored into the repo before use.
+; Adding it here without the file breaks the CI build.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
