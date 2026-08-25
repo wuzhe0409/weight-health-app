@@ -112,10 +112,27 @@ jobs:
       - name: Build installer (Inno Setup)
         shell: powershell
         run: |
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe" }
+          # Locate ISCC; fall back to installing Inno Setup if absent.
+          $candidates = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            Write-Host "ISCC not found, installing Inno Setup via choco..."
+            choco install innosetup -y --no-progress
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw "ISCC.exe not found even after choco install" }
+          Write-Host "Using ISCC: $iscc"
+          # Diagnostics: the iss script reads these paths relative to desktop/
+          Write-Host "--- dist bundle:"
+          Get-ChildItem backend\dist\WeightHealth | Select-Object -First 5 Name
+          Write-Host "--- license exists: $(Test-Path LICENSE)"
+          Write-Host "--- icon exists: $(Test-Path desktop\icons\app-icon.ico)"
           & $iscc desktop\installer.iss
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          Get-ChildItem desktop\installer_output
 
       - name: Package portable zip
         shell: powershell
