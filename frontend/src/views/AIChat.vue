@@ -147,6 +147,16 @@ function detectIntent(text: string, hasImage: boolean): 'analyze' | 'chat' {
   if (hasImage) return 'analyze'
   // Multi-date weight entries → analyze (batch fill path)
   if (t && extractMultiDayData(t).length >= 1) return 'analyze'
+
+  // Conversational follow-up WITHOUT record markers → chat, never analyze.
+  // e.g. "菜团子应该有个300卡 我感觉鸡公煲可能有800-1000 你觉得呢" is the
+  // user DISCUSSING a previous estimate, not logging a new record.
+  const hasRecordMarkers = /[早午晚]餐|[早午晚]饭|吃了|喝了|加餐|零食|夜宵|排便|拉了|拉屎|大便|月经|生理期|大姨妈|例假|经期|kg|公斤|斤|日|号/.test(t)
+  if (!hasRecordMarkers &&
+      /(你觉得|你说|对吧|对吗|我觉得|我感觉|我认为|高估|低估|偏高|偏低|重估|重新估|调整|应该|大概|可能|差不多|呢)/.test(t)) {
+    return 'chat'
+  }
+
   // Standalone weight number → analyze
   if (/(\d{2,3}(?:\.\d+)?)\s*(?:kg|公斤|斤)/.test(t)) return 'analyze'
   // Food / meal / bowel / period keywords → analyze (will save a record)
@@ -156,6 +166,9 @@ function detectIntent(text: string, hasImage: boolean): 'analyze' | 'chat' {
   if (/(为什么|怎么|咋|哪|啥|什么|是不是|能否|会不会|怎样|如何|几|多少)/.test(t)) return 'chat'
   // Default: short question-like → chat, long descriptive → analyze
   if (t.length < 30 && !/\d/.test(t)) return 'chat'
+  // With conversation history, ambiguous text is more likely a follow-up
+  // than a fresh record — prefer chat (the model can still query tools).
+  if (chatMessages.value.length > 0) return 'chat'
   return 'analyze'
 }
 
@@ -239,6 +252,19 @@ function scrollChat() {
 }
 
 // ---- AI Chat ----
+// Compact digest of the last analysis so the chat model can DISCUSS its own
+// previous estimates (without it, follow-ups like "鸡公煲应该有800-1000吧"
+// hit a model that has no idea what it estimated before).
+function analysisDigest(): string {
+  const r = aiResult.value
+  if (!r || !Array.isArray(r.kcal_breakdown) || !r.kcal_breakdown.length) return ''
+  const items = r.kcal_breakdown
+    .map((b: any) => `${b.food}(${b.kcal_min ?? '?'}~${b.kcal_max ?? '?'})`)
+    .join('、')
+  const total = `总计${r.structured?.total_kcal_min ?? '?'}~${r.structured?.total_kcal_max ?? '?'}kcal`
+  return `上一轮AI热量估算：${items}，${total}`
+}
+
 async function onSendChat() {
   const msg = nlText.value.trim()
   if (!msg) return
@@ -251,7 +277,11 @@ async function onSendChat() {
 
   try {
     const history = chatMessages.value.slice(0, -1).map(m => ({ role: m.role, content: m.content }))
-    const { data } = await api.aiChat(msg, history)
+    // Attach the previous estimate as context (sent to the model only,
+    // the visible bubble stays clean).
+    const digest = analysisDigest()
+    const outgoing = digest ? `${msg}\n\n（上下文参考：${digest}）` : msg
+    const { data } = await api.aiChat(outgoing, history)
     chatMessages.value.push({ role: 'assistant', content: data.reply })
   } catch (e: any) {
     chatMessages.value.push({ role: 'assistant', content: `出错了：${e.response?.data?.detail || e.message}` })
